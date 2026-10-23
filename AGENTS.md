@@ -1,0 +1,85 @@
+# Правила работы в TripPilot (для ИИ-ассистентов и людей)
+
+Этот файл читают ИИ-ассистенты всех участников команды. Человек тоже может по нему сверяться.
+
+## Перед началом каждой сессии
+
+1. Выполни `git pull`: лид мог обновить задание.
+2. Узнай ветку: `git branch --show-current`. Ветка `team/<роль>` → твоё задание лежит в `tasks/<роль>.md`. Прочитай его целиком и работай только по нему.
+3. Если нужно, прочитай [docs/architecture.md](docs/architecture.md) (архитектура) и [README.md](README.md) (запуск, маршруты, миграции).
+
+Если задание противоречит этому файлу, прав этот файл. Об этом противоречии скажи человеку.
+
+## Проект
+
+AI-агент для путешествий (Ostrovok Hackathon 2026, трек «О!дин запрос»). Одно сообщение пользователя превращается в план поездки и доводится до имитации оплаты.
+
+Стек зафиксирован, не предлагай его сменить: Python 3.12, FastAPI, Streamlit, PostgreSQL 16 + pgvector, SQLAlchemy 2 (async), Alembic, Pydantic v2, uv. Всё запускается в Docker: `docker compose up --build` → http://localhost:8080.
+
+**Главный принцип:** LLM понимает запрос и формулирует объяснения, а решения и проверки выполняет код. Цены, даты, наличие, расписания и правила никогда не придумываются: они берутся только из данных и инструментов.
+
+## Слои и правило зависимостей
+
+```
+src/trip_pilot/
+├── domain/     модели и доменные ошибки            ┐
+├── agent/      оркестратор, разбор запроса, события │ ядро: НЕ импортирует adapters, api, ui,
+├── planning/   фильтры, скоринг, пакеты, проверки   │ sqlalchemy, fastapi, streamlit, httpx
+├── services/   стоимость, объяснения, бронирование  ┘
+├── ports.py    интерфейсы (Protocol), через которые ядро вызывает внешний мир
+├── adapters/   реализации портов: db, llm, sources
+├── rag/        база знаний (pgvector + полнотекстовый поиск)
+├── seed/       сидирование
+├── api/        FastAPI (композиция зависимостей здесь)
+└── ui/         Streamlit: тонкий клиент, ходит только в API
+```
+
+## Правила кода
+
+- Ядро работает через порты из `ports.py`; конкретные реализации подставляются в `api/main.py`.
+- Деньги хранятся в `Decimal` (в БД `NUMERIC(12,2)`), не `float`. Время — `datetime` с часовым поясом (в БД `timestamptz`), часовые пояса в формате IANA (`Europe/Moscow`), в коде `zoneinfo`.
+- Ожидаемые ошибки (неверный ввод, ничего не найдено, бюджет мал) возвращаются как `Result` библиотеки `returns` (`Success` / `Failure`) с типами из `domain/errors.py`. Инфраструктурные сбои (БД недоступна, таймаут LLM) — обычные исключения.
+- Схема БД меняется только миграциями Alembic (команды в README). Руками в pgAdmin её не правят.
+- ORM-модели каждой зоны лежат в своём модуле `adapters/db/` (см. задание). Чужие модули не трогай.
+- Зависимости добавляются только через `pyproject.toml` + `make lock` (обновляет `uv.lock`). Не используй `pip install`. Новую зависимость сначала согласуй с лидом: `uv.lock` общий для всех.
+- Логи пиши через `logging` (в stdout), не через `print`.
+- Стиль кода проверяет `ruff` (строка до 100 символов). Комментарии и docstring пиши на русском, коротко и по делу.
+- Код пиши вместе с тестами (`tests/unit/...`). Внешний мир в тестах подменяется фейками из `tests/fakes.py`.
+- Синтетические данные и сгенерированные тексты помечаются (`is_synthetic`, `source: synthetic`).
+- Секреты хранятся только в `.env`. Никогда не пиши их в код, логи, тесты и коммиты.
+
+## Зоны владения
+
+| Роль | Ветка | Задание | Владеет |
+|---|---|---|---|
+| лид | `team/lead` | `tasks/lead.md` | `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/orchestrator.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/` |
+| rag | `team/rag` | `tasks/rag.md` | `rag/`, `data/knowledge/`, `adapters/llm/`, `adapters/db/knowledge.py`, `services/memory.py`, `evals/` |
+| data | `team/data` | `tasks/data.md` | `seed/`, `data/reference/`, `adapters/sources/`, `adapters/db/{reference,inventory}.py`, `planning/` |
+| ui | `team/ui` | `tasks/ui.md` | `ui/`, `.streamlit/`, `agent/intent.py`, `agent/clarifier.py`, `agent/prompts/`, `services/explanation.py` |
+
+**Контракты** (`domain/`, `ports.py`, `agent/events.py`, формат события `plan`, маршруты API) меняет только лид. Нужна правка контракта или файла чужой зоны — **остановись** и опиши человеку, что и зачем нужно изменить. Не правь сам.
+
+Миграции Alembic создаёт любая зона, но только для своих таблиц. Если после `git pull origin main` у Alembic две головы (`alembic heads`), исправь `down_revision` своей новой миграции на актуальную голову.
+
+## Проверка перед словом «готово»
+
+Запусти и убедись, что всё прошло:
+
+```bash
+docker build -f docker/app.Dockerfile --target dev -t trip-pilot-dev .
+docker run --rm trip-pilot-dev ruff check src tests migrations
+docker run --rm trip-pilot-dev pytest
+docker compose up --build -d
+curl -s http://localhost:8080/health
+```
+
+Последняя команда должна вернуть `{"status":"ok"}`. Если что-то не прошло, так и скажи. Не выдавай непроверенное за готовое.
+
+## Git
+
+- Коммиты делает **человек** после того, как прочитал diff. Ассистент предлагает разбиение на коммиты и их сообщения.
+- Формат сообщений — Conventional Commits на русском, только суть сделанного, без строк авторства: `feat(planning): добавить сборку трёх пакетов`.
+- Работа идёт в своей ветке `team/<роль>`. В `main` попадает только через PR с зелёным CI, слияние обычным merge commit (не squash).
+- Не реже раза в день подтягивай `main` к себе: `git pull origin main`.
+- Не коммить напрямую в `main`, не делай `force push`, не переписывай опубликованную историю.
+- Конфликт в `uv.lock`: возьми версию из `main` и снова выполни `make lock`.

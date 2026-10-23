@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Образ для тестов и линтера
+        run: docker build -f docker/app.Dockerfile --target dev -t trip-pilot-dev .
+
+      - name: Линтер
+        run: docker run --rm trip-pilot-dev ruff check src tests migrations
+
+      - name: Тесты
+        run: docker run --rm trip-pilot-dev pytest
+
+      - name: Конфигурация compose
+        run: docker compose config --quiet
+
+      - name: Запуск стека, как у жюри, и проверка /health
+        run: |
+          docker compose up --build -d
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/health; then exit 0; fi
+            sleep 2
+          done
+          docker compose ps -a
+          docker compose logs
+          exit 1
+
+      - name: Остановить стек
+        if: always()
+        run: docker compose down -v

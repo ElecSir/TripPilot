@@ -11,7 +11,7 @@
 
 ## Твоя зона
 
-**Можно менять:** `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/orchestrator.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/*.md` (задания команды).
+**Можно менять:** `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/actions.py`, `agent/orchestrator.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/*.md` (задания команды).
 
 **Нельзя без владельца:** `rag/`, `adapters/llm/` (rag); `seed/`, `planning/`, `adapters/sources/`, `adapters/db/inventory.py` (data); `ui/`, `agent/intent.py`, `agent/clarifier.py`, `services/explanation.py` (ui).
 
@@ -23,22 +23,22 @@
 
 ### 0.1. Зависимости MVP разом
 Чтобы никто не правил `uv.lock` параллельно, добавь в `pyproject.toml` всё, что понадобится в MVP: `openai`, `returns`, `pyyaml`, `tenacity`, `rapidfuzz`. Потом выполни `make lock`.
-- [ ] `uv.lock` обновлён, образ собирается
+- [x] `uv.lock` обновлён, образ собирается
 
 ### 0.2. Разделить `adapters/db/orm.py` по зонам
 
 | Модуль | Содержимое | Владелец |
 |---|---|---|
-| `base.py` | `Base`, `EMBEDDING_DIM` | лид |
+| `base.py` | `Base` | лид |
 | `chat.py` | `ChatSession`, `ChatMessage` | лид |
 | `orders.py` | пустой, с docstring (заполнишь в задаче 4) | лид |
-| `knowledge.py` | `KbDocument`, `KbChunk` | rag |
+| `knowledge.py` | `KbDocument`, `KbChunk`, `EMBEDDING_DIM` | rag |
 | `reference.py` | `Destination` | data |
 | `inventory.py` | **пустой**, с docstring (заполнит data) | data |
 | `models.py` | импортирует все модули выше; его импортирует `migrations/env.py` | лид |
 
-- [ ] `orm.py` удалён, импорты в коде и тестах обновлены
-- [ ] `alembic check` показывает «No new upgrade operations detected» (схема не изменилась)
+- [x] `orm.py` удалён, импорты в коде и тестах обновлены
+- [x] `alembic check` показывает «No new upgrade operations detected» (схема не изменилась)
 
 ### 0.3. Доменные модели и ошибки (`domain/`)
 
@@ -137,8 +137,8 @@ class TripStateRepository(Protocol):
 `KnowledgeHit`: `text`, `title`, `heading_path`, `source`, `score`.
 
 ### 0.5. Фейки (`tests/fakes.py`)
-Реализации всех портов на данных в памяти: 3 направления, по 3 отеля, по 2 рейса туда и обратно, по трансферу; `FakeLLM(enabled=False)`.
-- [ ] на фейках тест проходит путь «запрос → 3 пакета» без БД
+Реализации всех портов на данных в памяти: 3 направления, по 3 отеля, по 2 рейса туда и обратно, по трансферу; `FakeLLM()` без ответов ведёт себя как LLM без ключа. Подключение: `from tests.fakes import fake_sources`.
+- [x] фейки реализуют все порты, а их данных хватает на три разных пакета (`tests/unit/test_contracts.py`). Сами пакеты собирает data (задача 6 в `tasks/data.md`)
 
 ### 0.6. API-контракт для ui
 
@@ -149,6 +149,9 @@ class TripStateRepository(Protocol):
 | `POST /api/orders` | `{"session_id", "package_id", "idempotency_key"}` | `Order`; повтор с тем же ключом возвращает тот же заказ |
 
 Ответ на вопрос агента UI отправляет обычным `text`.
+
+Действия описаны в `agent/actions.py`. Интерфейс оркестратора: `handle(session_id, text)` и `handle_action(session_id, action)` → поток событий. До задач 1 и 4 маршрут плана отвечает `404`, а заказов — `501`: контракт виден в `/api/docs`, UI может на него опираться.
+- [x] маршруты и схемы в `/api/docs`, тесты контракта — `tests/unit/test_api_contract.py`
 
 - [ ] **Шаг 0 готов:** PR влит в `main`, команда предупреждена
 
@@ -212,3 +215,4 @@ git switch team/lead
 | Дата | Что изменено |
 |---|---|
 | 2026-10-23 | первая версия |
+| 2026-10-23 | шаг 0 выполнен в коде (кроме merge в `main`). Уточнения по ходу: `EMBEDDING_DIM` живёт в `knowledge.py`; `children_ages` допускает `None` («возраст не известен»); `LLMUnavailable` объявлен в `ports.py`; действия вынесены в `agent/actions.py`; критерий 0.5 сужен до «фейки реализуют порты и данных хватает на три пакета» — сами пакеты собирает data |

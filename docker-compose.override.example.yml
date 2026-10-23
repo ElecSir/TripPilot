@@ -1,0 +1,23 @@
+# Локальная разработка:
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+# Сам docker-compose.override.yml не коммитим (он в .gitignore): Compose подхватывает его
+# автоматически при любом `docker compose up`, в том числе у жюри.
+
+services:
+  db:
+    ports:
+      - "5433:5432"              # локальный pgAdmin 4: localhost:5433, trip / trip
+
+  api:
+    command: ["uvicorn", "trip_pilot.api.main:app", "--host", "0.0.0.0", "--port", "8000",
+              "--reload", "--reload-dir", "/app/src"]
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"   # на Windows события файлов не доходят до контейнера
+    volumes:
+      - ./src:/app/src
+
+  ui:
+    command: ["streamlit", "run", "src/trip_pilot/ui/app.py",
+              "--server.runOnSave", "true", "--server.fileWatcherType", "poll"]
+    volumes:
+      - ./src:/app/src

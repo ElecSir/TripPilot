@@ -1,0 +1,15 @@
+.git
+.github
+.gitignore
+.gitattributes
+.env
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+docs
+docker-compose*.yml
+Makefile
+README.md

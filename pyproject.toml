@@ -8,11 +8,16 @@ dependencies = [
     "asyncpg>=0.29",
     "fastapi>=0.115",
     "httpx>=0.27",
+    "openai>=1.50",
     "pgvector>=0.3",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
+    "pyyaml>=6.0",
+    "rapidfuzz>=3.9",
+    "returns>=0.23",
     "sqlalchemy[asyncio]>=2.0.30",
     "streamlit>=1.40",
+    "tenacity>=9.0",
     "uvicorn[standard]>=0.30",
 ]
 
@@ -31,6 +36,7 @@ packages = ["src/trip_pilot"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # чтобы тесты всех зон импортировали фейки: from tests.fakes import ...
 
 [tool.ruff]
 line-length = 100
@@ -39,3 +45,6 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["trip_pilot", "tests"]

@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from trip_pilot.adapters.db.orm import Destination
+from trip_pilot.adapters.db.reference import Destination
 
 log = logging.getLogger(__name__)
 

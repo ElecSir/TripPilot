@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from trip_pilot.adapters.db.engine import create_engine, create_session_factory
 from trip_pilot.agent.orchestrator import StubOrchestrator
-from trip_pilot.api import chat, health
+from trip_pilot.api import chat, health, trips
 from trip_pilot.config import get_settings
 from trip_pilot.logs import setup_logging
 
@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(chat.router, prefix="/api")
+    app.include_router(trips.router, prefix="/api")
     return app
 
 

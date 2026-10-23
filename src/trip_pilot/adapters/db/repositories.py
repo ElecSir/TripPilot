@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from trip_pilot.adapters.db.orm import ChatMessage, ChatSession
+from trip_pilot.adapters.db.chat import ChatMessage, ChatSession
 from trip_pilot.domain.chat import Message, Role
 
 

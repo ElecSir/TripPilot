@@ -44,7 +44,8 @@ src/trip_pilot/
 - Зависимости добавляются только через `pyproject.toml` + `make lock` (обновляет `uv.lock`). Не используй `pip install`. Новую зависимость сначала согласуй с лидом: `uv.lock` общий для всех.
 - Логи пиши через `logging` (в stdout), не через `print`.
 - Стиль кода проверяет `ruff` (строка до 100 символов). Комментарии и docstring пиши на русском, коротко и по делу.
-- Код пиши вместе с тестами (`tests/unit/...`). Внешний мир в тестах подменяется фейками из `tests/fakes.py`.
+- Код пиши вместе с тестами (`tests/unit/...`). Внешний мир в тестах подменяется фейками: `from tests.fakes import fake_sources`.
+- Нет ключа LLM — методы порта `LLM` бросают `ports.LLMUnavailable`; ядро ловит его и работает без LLM.
 - Синтетические данные и сгенерированные тексты помечаются (`is_synthetic`, `source: synthetic`).
 - Секреты хранятся только в `.env`. Никогда не пиши их в код, логи, тесты и коммиты.
 
@@ -52,12 +53,12 @@ src/trip_pilot/
 
 | Роль | Ветка | Задание | Владеет |
 |---|---|---|---|
-| лид | `team/lead` | `tasks/lead.md` | `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/orchestrator.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/` |
+| лид | `team/lead` | `tasks/lead.md` | `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/actions.py`, `agent/orchestrator.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/` |
 | rag | `team/rag` | `tasks/rag.md` | `rag/`, `data/knowledge/`, `adapters/llm/`, `adapters/db/knowledge.py`, `services/memory.py`, `evals/` |
 | data | `team/data` | `tasks/data.md` | `seed/`, `data/reference/`, `adapters/sources/`, `adapters/db/{reference,inventory}.py`, `planning/` |
 | ui | `team/ui` | `tasks/ui.md` | `ui/`, `.streamlit/`, `agent/intent.py`, `agent/clarifier.py`, `agent/prompts/`, `services/explanation.py` |
 
-**Контракты** (`domain/`, `ports.py`, `agent/events.py`, формат события `plan`, маршруты API) меняет только лид. Нужна правка контракта или файла чужой зоны — **остановись** и опиши человеку, что и зачем нужно изменить. Не правь сам.
+**Контракты** (`domain/`, `ports.py`, `agent/events.py`, `agent/actions.py`, формат события `plan`, маршруты API, `tests/fakes.py`) меняет только лид. Нужна правка контракта или файла чужой зоны — **остановись** и опиши человеку, что и зачем нужно изменить. Не правь сам.
 
 Миграции Alembic создаёт любая зона, но только для своих таблиц. Если после `git pull origin main` у Alembic две головы (`alembic heads`), исправь `down_revision` своей новой миграции на актуальную голову.
 

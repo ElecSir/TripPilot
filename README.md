@@ -56,8 +56,10 @@ docker compose down -v                 # удалить данные БД цел
 - `/` — UI (Streamlit)
 - `/health` — `200 {"status":"ok"}`; если БД недоступна, `503 {"status":"degraded"}`
 - `/api/docs` — Swagger UI
-- `POST /api/chat` — `{"session_id": "<uuid>", "text": "..."}` → поток событий агента (`text/event-stream`)
+- `POST /api/chat` — `{"session_id": "<uuid>", "text": "..."}` или `{"session_id": "<uuid>", "action": {"type": "select_package", "package_id": "p2"}}` → поток событий агента (`text/event-stream`)
 - `GET /api/chat/{session_id}/messages` — история диалога
+- `GET /api/trips/{session_id}` — текущий план поездки (`TripState`); пока плана нет, `404`
+- `POST /api/orders` — `{"session_id", "package_id", "idempotency_key"}` → заказ (имитация оплаты); контракт опубликован, реализация в работе (`501`)
 - Тестовый пользователь не нужен: авторизации пока нет. Диалог привязан к `?sid=` в адресе страницы.
 
 Протокол событий (`src/trip_pilot/agent/events.py`), одна строка SSE на событие:
@@ -77,19 +79,20 @@ data: {"type": "done"}
 
 ```
 src/trip_pilot/
-├── agent/        # ядро: протокол событий, оркестратор (пока заглушка)
-├── domain/       # чистые доменные модели
-├── adapters/db/  # SQLAlchemy async: engine, ORM, репозитории
-├── rag/          # база знаний (этап 3)
+├── domain/       # ядро: запрос, предложения, план, доменные ошибки
+├── agent/        # ядро: протокол событий, действия, оркестратор (пока заглушка)
+├── ports.py      # интерфейсы, через которые ядро обращается к данным, RAG и LLM
+├── adapters/db/  # SQLAlchemy async: ORM-модели по зонам, репозитории
+├── rag/          # база знаний
 ├── seed/         # сидирование справочников
-├── api/          # FastAPI: /health, /api/chat
+├── api/          # FastAPI: /health, /api/chat, /api/trips, /api/orders
 ├── ui/           # Streamlit: тонкий клиент к API
 └── cli.py        # bootstrap | migrate | seed
 migrations/       # Alembic
 data/             # справочники и документы для RAG
 docker/           # Dockerfile, конфиг nginx, pgAdmin
 docs/             # документация
-tests/            # pytest
+tests/            # pytest; tests/fakes.py — фейки всех портов для тестов без БД и LLM
 .github/          # CI: линтер, тесты, запуск стека и проверка /health
 ```
 
@@ -109,7 +112,7 @@ docker compose up --build
 **Миграции.** Схема меняется только через Alembic. Правки, сделанные руками в pgAdmin, до жюри не доедут.
 
 ```bash
-# после изменения src/trip_pilot/adapters/db/orm.py:
+# после изменения моделей в src/trip_pilot/adapters/db/:
 docker compose run --rm -v ./migrations:/app/migrations bootstrap alembic revision --autogenerate -m "add hotel"
 docker compose run --rm bootstrap      # применить
 docker compose run --rm bootstrap alembic check   # ORM и БД совпадают?

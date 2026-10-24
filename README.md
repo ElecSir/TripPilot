@@ -105,9 +105,17 @@ cp docker-compose.override.example.yml docker-compose.override.yml
 docker compose up --build
 ```
 
-БД будет доступна на `localhost:5433` (`trip` / `trip`). Порт 5433, а не 5432, чтобы не конфликтовать с локально установленным Postgres. Сам `docker-compose.override.yml` в git не попадает: Compose подхватывает его автоматически, в том числе у жюри.
+БД будет доступна на `localhost:5433` (`trip` / `trip`), только с этого компьютера. Порт 5433, а не 5432, чтобы не конфликтовать с локально установленным Postgres. Сам `docker-compose.override.yml` в git не попадает: Compose подхватывает его автоматически, в том числе у жюри.
 
-**pgAdmin в Docker:** `docker compose --profile tools up --build` → http://localhost:5050, сервер уже настроен (пароль БД: `trip`).
+**pgAdmin в Docker:** `docker compose --profile tools up --build` → http://localhost:5050 (только с этого компьютера). Вход: `PGADMIN_EMAIL` / `PGADMIN_PASSWORD` из `.env`, по умолчанию `dev@example.com` / `dev`. Сервер БД уже настроен, пароль БД — `trip`.
+
+**Git-хуки** — один раз после клонирования:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`pre-commit` проверяет коммит на секреты (gitleaks в Docker), `pre-push` не даёт пушить напрямую в `main`.
 
 **Миграции.** Схема меняется только через Alembic. Правки, сделанные руками в pgAdmin, до жюри не доедут.
 
@@ -138,3 +146,12 @@ make test-integration   # или: docker compose --profile tests run --rm tests 
 **Зависимости:** добавить пакет в `pyproject.toml`, затем `make lock` обновит `uv.lock` (uv запускается в контейнере).
 
 **Сдача:** в дедлайн поставить тег `submission` на последний коммит основной ветки.
+
+## Безопасность
+
+- **Секреты** (ключ LLM и прочее) хранятся только в `.env`. Он и любые `.env.*`, кроме `.env.example`, а также ключи и сертификаты (`*.pem`, `*.key`, `secrets/`) исключены из git (`.gitignore`) и из Docker-образов (`.dockerignore`).
+- **Проверка на секреты.** `scripts/ci.sh` первым шагом прогоняет gitleaks по истории git, хук `pre-commit` — по каждому коммиту.
+- **Наружу открыт только шлюз `8080`.** БД, API и UI доступны лишь внутри сети compose. Порты для разработки — pgAdmin `5050` и БД `5433` из override-файла — привязаны к `127.0.0.1`: из локальной сети они недоступны. pgAdmin требует вход.
+- **Пароли по умолчанию** (`trip`, `dev`) — локальные, для запуска без настройки. Где-то кроме своего компьютера задайте свои в `.env`. Пароль БД применяется при первом создании тома: чтобы сменить его, выполните `docker compose down -v`.
+- **`?sid=` в адресе страницы — ключ к диалогу:** по нему API отдаёт историю и план. Авторизации в MVP нет, поэтому не публикуйте ссылки и скриншоты с `sid` из реальных диалогов. Данные в демо синтетические.
+- **`docker compose config` без `--quiet` печатает все переменные из `.env`**, включая ключи. Не выкладывайте его вывод в чаты и PR.

@@ -87,12 +87,12 @@ services:
     image: dpage/pgadmin4:9.8
     profiles: ["tools"]
     environment:
-      PGADMIN_DEFAULT_EMAIL: dev@example.com
-      PGADMIN_DEFAULT_PASSWORD: dev
-      PGADMIN_CONFIG_SERVER_MODE: "False"
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      # Серверный режим: вход по логину и паролю (в настольном режиме pgAdmin пускает без входа).
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-dev@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-dev}
+      PGADMIN_CONFIG_SERVER_MODE: "True"
     ports:
-      - "5050:80"
+      - "127.0.0.1:5050:80"      # только с этого компьютера, не из локальной сети
     volumes:
       - ./docker/pgadmin-servers.json:/pgadmin4/servers.json:ro
     depends_on:

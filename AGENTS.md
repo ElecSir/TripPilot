@@ -53,35 +53,27 @@ src/trip_pilot/
 
 | Роль | Ветка | Задание | Владеет |
 |---|---|---|---|
-| лид | `team/lead` | `tasks/lead.md` | `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/actions.py`, `agent/orchestrator.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/` |
+| лид | `team/lead` | `tasks/lead.md` | `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/actions.py`, `agent/toolkit.py`, `agent/orchestrator.py`, `agent/dates.py`, `agent/texts.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/` |
 | rag | `team/rag` | `tasks/rag.md` | `rag/`, `data/knowledge/`, `adapters/llm/`, `adapters/db/knowledge.py`, `services/memory.py`, `evals/` |
 | data | `team/data` | `tasks/data.md` | `seed/`, `data/reference/`, `adapters/sources/`, `adapters/db/{reference,inventory}.py`, `planning/` |
 | ui | `team/ui` | `tasks/ui.md` | `ui/`, `.streamlit/`, `agent/intent.py`, `agent/clarifier.py`, `agent/prompts/`, `services/explanation.py` |
 
-**Контракты** (`domain/`, `ports.py`, `agent/events.py`, `agent/actions.py`, формат события `plan`, маршруты API, `tests/fakes.py`) меняет только лид. Нужна правка контракта или файла чужой зоны — **остановись** и опиши человеку, что и зачем нужно изменить. Не правь сам.
+**Контракты** (`domain/`, `ports.py`, `agent/events.py`, `agent/actions.py`, `agent/toolkit.py` — сигнатуры функций ui и data, которые вызывает оркестратор, формат события `plan`, маршруты API, `tests/fakes.py`) меняет только лид. Свою функцию из `agent/toolkit.py` реализуй строго с этой сигнатурой: оркестратор вызывает её именно так. Нужна правка контракта или файла чужой зоны — **остановись** и опиши человеку, что и зачем нужно изменить. Не правь сам.
 
 Миграции Alembic создаёт любая зона, но только для своих таблиц. Если после `git pull origin main` у Alembic две головы (`alembic heads`), исправь `down_revision` своей новой миграции на актуальную голову.
 
 ## Проверка перед словом «готово»
 
-Запусти и убедись, что всё прошло:
+Запусти все шаги CI одной командой и убедись, что в конце написано «Все шаги CI прошли»:
 
 ```bash
-docker build -f docker/app.Dockerfile --target dev -t trip-pilot-dev .
-docker run --rm trip-pilot-dev ruff check src tests migrations
-docker run --rm trip-pilot-dev pytest
-docker compose up --build -d
-curl -s http://localhost:8080/health
+sh scripts/ci.sh                                    # Git Bash, Linux, macOS
+& "C:\Program Files\Git\bin\sh.exe" scripts/ci.sh   # PowerShell на Windows
 ```
 
-Последняя команда должна вернуть `{"status":"ok"}`. Если менялись БД, репозитории или миграции, дополнительно:
+Это тот же скрипт, что запускает GitHub Actions: линтер, юнит-тесты, стек и `/health`, одна голова Alembic и `alembic check`, интеграционные тесты (`tests/integration/`, без БД пропускаются). Пока шаги идут по отдельности, удобно гонять только нужный: команды есть в `scripts/ci.sh`.
 
-```bash
-docker compose --profile tests run --rm --build tests
-docker compose run --rm bootstrap alembic check
-```
-
-Интеграционные тесты лежат в `tests/integration/` и без БД пропускаются. Если что-то не прошло, так и скажи. Не выдавай непроверенное за готовое.
+GitHub Actions в организации может не запускаться из-за лимита минут. Поэтому прогон `scripts/ci.sh` локально перед PR обязателен, а его итог указывается в описании PR. Если что-то не прошло, так и скажи. Не выдавай непроверенное за готовое.
 
 ## Git
 

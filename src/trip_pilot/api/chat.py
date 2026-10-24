@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from trip_pilot.adapters.db.repositories import ChatRepository
 from trip_pilot.agent.actions import AgentAction
-from trip_pilot.agent.events import DeltaEvent, DoneEvent, ErrorEvent, to_sse
+from trip_pilot.agent.events import DeltaEvent, DoneEvent, ErrorEvent, QuestionEvent, to_sse
 from trip_pilot.domain.chat import Message
 
 log = logging.getLogger(__name__)
@@ -57,6 +57,9 @@ async def chat(req: ChatRequest, request: Request) -> StreamingResponse:
             async for event in events:
                 if isinstance(event, DeltaEvent):
                     reply.append(event.text)
+                elif isinstance(event, QuestionEvent):
+                    # Текст вопроса тоже часть ответа: после F5 он должен остаться в чате.
+                    reply.append(f"\n\n{event.text}")
                 elif isinstance(event, DoneEvent) and reply:
                     # Сохраняем до отправки done: клиент вправе сразу закрыть соединение.
                     await save_reply("".join(reply).strip())

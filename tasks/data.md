@@ -22,13 +22,13 @@ docker compose up --build
 
 ## Твоя зона
 
-**Можно менять:** `seed/`, `data/reference/`, `adapters/sources/`, `adapters/db/inventory.py` и `adapters/db/reference.py` (появятся после шага 0 лида), `planning/`, свои миграции, тесты к этому.
+**Можно менять:** `seed/`, `data/reference/`, `adapters/sources/`, `adapters/db/inventory.py` и `adapters/db/reference.py` (уже есть в `main`), `planning/`, свои миграции, тесты к этому.
 
 **Нельзя без лида:** `domain/`, `ports.py`, `api/`, `migrations/env.py`, `pyproject.toml` / `uv.lock`, чужие зоны.
 
 ## Контракты, на которые опираешься
 
-Лид сегодня кладёт их в `main` (шаг 0). Ниже — черновик. Если он разойдётся с кодом в `main`, прав код.
+**Сначала подтяни `main`: `git pull origin main`.** Там уже лежат контракты (`domain/`, `ports.py`), сигнатуры твоих функций (`agent/toolkit.py`), фейки (`tests/fakes.py`), оркестратор, который эти функции вызывает (`agent/orchestrator.py`), и скрипт проверки `scripts/ci.sh`. Ниже — выжимка. Если она разойдётся с кодом в `main`, прав код.
 
 ```python
 # domain/offers.py — эти модели ты наполняешь данными (деньги Decimal, время с часовым поясом)
@@ -53,7 +53,28 @@ class TransferSource(Protocol):
     async def search(self, hotel_id: int, arrive_at: datetime, party: Party) -> list[Transfer]: ...
 ```
 
-`Party`: `adults`, `children_ages`, `pets`. `TripRequest`: `origin`, `destination`, `month`, `date_from`, `nights`, `party`, `budget`, `tags`, `must`.
+`Party`: `adults`, `children_ages` (в списке может быть `None`: возраст ещё не известен), `pets`; свойство `party.travellers` — число пассажиров. `TripRequest`: `origin`, `destination`, `month`, `date_from`, `nights`, `party`, `budget`, `tags`, `must`.
+
+**Функции, которые вызывает оркестратор лида** (точные сигнатуры — в `agent/toolkit.py`, не меняй их без согласования; все чистые и синхронные):
+```python
+# planning/inspiration.py
+def pick_destinations(request: TripRequest, catalog: list[Destination]) -> list[Destination]: ...
+# planning/packages.py
+def simple_packages(request: TripRequest, outbound: list[Leg], inbound: list[Leg], hotels: list[Hotel],
+                    transfers_by_hotel: dict[int, list[Transfer]]) -> Result[list[Package], DomainError]: ...
+# planning/itinerary.py
+def check_package(package: Package) -> list[str]: ...
+```
+
+Как оркестратор их использует:
+1. направления нет → `pick_destinations`, варианты показываются кнопками;
+2. даты поиска считает сам оркестратор. В `simple_packages` приходит `request` **с уже заполненными `date_from` и `nights`**: `check_in = request.date_from`, `check_out = date_from + nights`;
+3. `outbound` / `inbound` — рейсы туда и обратно на эти даты, `hotels` — отели направления, `transfers_by_hotel` — трансферы по `hotel.id`. Любой список может прийти пустым, если источник не ответил;
+4. к каждому пакету оркестратор применяет `check_package` (результат пишет в `package.issues`), затем объяснения ui.
+
+`Package` сам проверяет инварианты: `total` = сумма `price_breakdown`, `nights` = `check_out − check_in`. Иначе — `ValidationError`. `id` пакета уникален в плане (`p1`–`p3`): по нему UI выбирает пакет.
+
+Готовые данные для тестов: `from tests.fakes import fake_sources, sample_package`.
 
 ---
 
@@ -61,11 +82,11 @@ class TransferSource(Protocol):
 
 ### 1. Теги и тёплые месяцы направлений — можно начинать сразу
 - Добавь в `data/reference/destinations.json` поля `tags` (`sea`, `city`, `nature`, `warm`, `winter`) и `warm_months` — месяцы, когда комфортно купаться или гулять. Проверяй по открытым климатическим данным, не на глаз.
-- Миграция (после шага 0 лида, модель `Destination` будет в `adapters/db/reference.py`) добавляет колонки в `destination`, а `seed/reference.py` их заполняет.
+- Миграция добавляет колонки в `destination` (модель `Destination` — в `adapters/db/reference.py`), а `seed/reference.py` их заполняет. В `main` последняя миграция — `0002`, твоя идёт после неё (`down_revision = "0002"`).
 - [ ] данные заполнены у всех 12 направлений, миграция применяется на чистой БД
 
-### 2. Таблицы инвентаря — после шага 0 лида
-Модели в `adapters/db/inventory.py`: `hotel`, `transport_leg`, `transfer`. Индексы под поиск: `(destination)`, `(origin, destination, depart_at)`, `(hotel_id)`. Цены `NUMERIC(12,2)`, время `timestamptz`.
+### 2. Таблицы инвентаря
+Модели в `adapters/db/inventory.py`: `hotel`, `transport_leg`, `transfer`. Файл уже есть в `main`, пустой, и подключён к Alembic через `adapters/db/models.py`. Индексы под поиск: `(destination)`, `(origin, destination, depart_at)`, `(hotel_id)`. Цены `NUMERIC(12,2)`, время `timestamptz`.
 - [ ] `alembic check` после твоей миграции без расхождений
 
 ### 3. Генератор синтетики (`seed/synthetic.py`)
@@ -91,7 +112,7 @@ class TransferSource(Protocol):
 - [ ] юнит-тесты: «море в ноябре» → тёплые морские направления; «город» → города
 
 ### 6. Простые пакеты (`planning/packages.py`)
-`simple_packages(request, outbound, inbound, hotels, transfers_by_hotel) -> list[Package]`:
+`simple_packages(request, outbound, inbound, hotels, transfers_by_hotel) -> Result[list[Package], DomainError]`. Даты берутся из `request.date_from` и `request.nights`.
 - **economy** — минимальная полная стоимость;
 - **comfort** — максимум (звёзды, рейтинг), без пересадок, если такой вариант есть;
 - **balance** — лучшее соотношение рейтинга и цены;
@@ -132,3 +153,4 @@ class TransferSource(Protocol):
 | Дата | Что изменено |
 |---|---|
 | 2026-10-23 | первая версия |
+| 2026-10-24 | контракты и оркестратор уже в `main` (сначала `git pull origin main`); добавлены сигнатуры из `agent/toolkit.py`: `simple_packages` возвращает `Result`, а не список, `request` приходит с готовыми `date_from` и `nights`; описаны инварианты `Package` и уникальные `id`; `children_ages` допускает `None`; миграции идут после `0002`; проверка перед PR — `scripts/ci.sh` |

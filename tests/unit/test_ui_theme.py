@@ -16,7 +16,7 @@ def test_css_targets_native_bordered_columns_and_button_alignment() -> None:
     assert '[data-testid="stColumn"]:has(.trip-card-marker)' in css
     assert 'border: 2px solid var(--trip-border) !important' in css
     assert 'margin-top: auto !important' in css
-    assert '[data-testid="stVerticalBlockBorderWrapper"]' not in css
+    assert '[data-testid="stColumn"]:has(.trip-card-marker)' in css
 
 
 def test_dark_expander_and_chips_share_theme_variables() -> None:
@@ -35,3 +35,25 @@ def test_light_and_dark_theme_have_different_colors() -> None:
     assert PALETTES["light"]["bg"] in light
     assert PALETTES["dark"]["bg"] in dark
     assert "$bg" not in light and "$bg" not in dark
+
+
+def test_basket_border_and_buttons_use_theme_colors() -> None:
+    for dark in (True, False):
+        css = theme_css(dark)
+        assert '[data-testid="stVerticalBlockBorderWrapper"]:has(.trip-basket-marker)' in css
+        assert 'max-width: 70rem' in css
+        assert 'background: var(--trip-surface) !important' in css
+        assert 'button[kind="secondary"]' in css
+        assert 'background: var(--trip-overlay) !important' in css
+        assert 'button[kind="primary"]' in css
+        assert 'background: var(--trip-primary) !important' in css
+        assert '.trip-prices-panel' in css
+        assert '.trip-price-total' in css
+        assert ':is(.stApp, [data-testid="stDialog"])' in css
+
+
+def test_theme_buttons_have_distinct_primary_and_secondary_backgrounds() -> None:
+    for palette in PALETTES.values():
+        assert palette["primary"] != palette["overlay"]
+        assert palette["primary_hover"] != palette["primary"]
+        assert palette["primary"] != palette["bg"]

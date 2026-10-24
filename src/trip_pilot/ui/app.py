@@ -5,7 +5,6 @@ import logging
 import uuid
 from collections.abc import Iterator
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 
@@ -22,6 +21,17 @@ from trip_pilot.agent.events import (
     parse_event,
 )
 from trip_pilot.config import get_settings
+from trip_pilot.ui.cart_view import (
+    cart_details_html,
+    cart_header_html,
+    cart_prices_html,
+)
+from trip_pilot.ui.checkout import (
+    breakdown_matches_total,
+    money,
+    pay_once,
+    prepare_attempt,
+)
 from trip_pilot.ui.theme import theme_css
 
 LOGGER = logging.getLogger(__name__)
@@ -139,14 +149,6 @@ def run_agent(sid: str, text: str | None = None, action: dict | None = None) -> 
     return reply.strip()
 
 
-def price(value: object) -> str:
-    try:
-        amount = Decimal(str(value))
-        return f"{amount:,.0f}".replace(",", " ") + " ₽"
-    except (InvalidOperation, TypeError):
-        return "Цена уточняется"
-
-
 def flight_text(flight: dict | None) -> str:
     if not flight:
         return "Данные о рейсе уточняются"
@@ -193,6 +195,10 @@ def render_assumptions(plan: dict) -> None:
 
 
 def select_package(sid: str, package_id: str) -> None:
+    # При выборе другого пакета старый платёж не должен использоваться повторно.
+    st.session_state.checkout_attempt = None
+    st.session_state.checkout_dialog_open = False
+    st.session_state.compare_packages = False
     if DEMO_PLAN_ENABLED:
         st.session_state.demo_selected_package_id = package_id
         st.toast("Демонстрационный пакет выбран")
@@ -211,7 +217,7 @@ def render_package(package: dict, sid: str, selected_id: str | None) -> None:
         f'<h3 class="trip-card-marker">{escape(str(tier))}</h3>',
         unsafe_allow_html=True,
     )
-    st.metric("Стоимость всей поездки", price(package.get("total")))
+    st.metric("Стоимость всей поездки", money(package.get("total")))
     st.caption(f"{package.get('nights', '—')} ночей · за всех путешественников")
     stars = hotel.get("stars")
     stars_label = f" · {stars}★" if stars else ""
@@ -243,6 +249,155 @@ def render_package(package: dict, sid: str, selected_id: str | None) -> None:
     )
 
 
+def open_checkout(sid: str, package_id: str) -> None:
+    """Ключ создаётся только для новой пары сессия–пакет и сохраняется при повторах."""
+    st.session_state.checkout_attempt = prepare_attempt(
+        st.session_state.get("checkout_attempt"), sid, package_id
+    )
+    st.session_state.checkout_dialog_open = True
+
+
+def render_order(order: dict, *, demo: bool) -> None:
+    """Показывает подтверждение из ответа API, не выдумывая номер заказа."""
+    order_id = str(order.get("id", "—"))
+    status = order.get("status")
+    if status == "paid":
+        st.success(f"✅ Заказ {order_id} оформлен!")
+        st.write(f"Итоговая стоимость: **{money(order.get('total'))}**")
+        if demo or order.get("is_synthetic"):
+            st.info("Это демонстрационное оформление. Деньги не списывались, заказ не настоящий.")
+        else:
+            st.caption("Статус заказа: оплачен (имитация)")
+    else:
+        st.info(f"Заказ {order_id} создан. Статус: {status or 'уточняется'}.")
+        st.caption("Новая попытка оплаты не отправляется до уточнения статуса заказа.")
+
+
+def render_cart_contents(package: dict, request: dict, *, compact: bool = False) -> None:
+    """В широкой корзине разделяем состав и стоимость; в диалоге собираем вертикально."""
+    details = cart_details_html(
+        package,
+        request,
+        flight_text(package.get("outbound")),
+        flight_text(package.get("inbound")),
+        compact=compact,
+    )
+    prices = cart_prices_html(package)
+    if compact:
+        st.markdown(details, unsafe_allow_html=True)
+        st.markdown(prices, unsafe_allow_html=True)
+    else:
+        detail_col, price_col = st.columns([1.5, 1], gap="large", vertical_alignment="top")
+        with detail_col:
+            st.markdown(details, unsafe_allow_html=True)
+        with price_col:
+            st.markdown(prices, unsafe_allow_html=True)
+
+    if breakdown_matches_total(package) is False:
+        st.warning("Сумма компонентов отличается от цены пакета. Уточните стоимость до оплаты.")
+
+
+@st.dialog("Оформление поездки")
+def checkout_dialog(sid: str, package: dict, request: dict) -> None:
+    """Открывается по кнопке из корзины; повторяет запрос только с прежним UUID."""
+    attempt = st.session_state.get("checkout_attempt")
+    if not attempt or attempt.get("package_id") != package.get("id"):
+        st.error("Пакет изменился. Вернитесь в корзину и оформите заказ заново.")
+        return
+
+    st.markdown("**Проверьте состав перед оформлением**")
+    render_cart_contents(package, request, compact=True)
+    if DEMO_PLAN_ENABLED:
+        st.caption("🧪 Демонстрация: запрос в API заказов не отправляется.")
+    else:
+        st.caption("Оплата имитируется — вводить данные банковской карты не нужно.")
+
+    if attempt.get("order"):
+        render_order(attempt["order"], demo=DEMO_PLAN_ENABLED)
+        return
+    if attempt.get("status") == "retry":
+        st.warning(
+            "Подтверждение от сервера не получено. Повтор использует тот же ключ запроса, "
+            "чтобы не создавать второй заказ."
+        )
+    if attempt.get("status") == "submitting":
+        st.info("Запрос уже обрабатывается. Повторная отправка заблокирована.")
+        return
+
+    if st.button(
+        "Оплатить (имитация)",
+        key="checkout_pay",
+        type="primary",
+        use_container_width=False,
+    ):
+        with st.spinner("Оформляем заказ…"):
+            try:
+                order = pay_once(
+                    attempt,
+                    package,
+                    demo=DEMO_PLAN_ENABLED,
+                    client=None if DEMO_PLAN_ENABLED else api_client(),
+                )
+            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                LOGGER.exception("Не удалось завершить оформление заказа")
+                st.error("Не удалось подтвердить заказ. Можно повторить с тем же ключом.")
+                return
+        if order:
+            st.session_state.plan["order"] = order
+            st.session_state.checkout_dialog_open = False
+            st.rerun()
+
+
+def render_basket(package: dict, plan: dict, sid: str) -> None:
+    """Одна выделенная панель для состава поездки, цены и действий."""
+    tier = TIER_LABELS.get(package.get("tier"), "Выбранный пакет")
+    with st.container(border=True):
+        st.markdown(cart_header_html(tier), unsafe_allow_html=True)
+        render_cart_contents(package, plan.get("request") or {})
+
+        attempt = st.session_state.get("checkout_attempt") or {}
+        order = plan.get("order") or attempt.get("order")
+        if order:
+            render_order(order, demo=DEMO_PLAN_ENABLED)
+        else:
+            if breakdown_matches_total(package) is False:
+                st.error("Оформление недоступно, пока не согласована итоговая стоимость.")
+
+        # Действия ограничены долями строки; на узких экранах Streamlit складывает колонки.
+        pay_col, change_col, _ = st.columns([1.2, 1.5, 2.3], gap="small")
+        if not order and breakdown_matches_total(package) is not False:
+            with pay_col:
+                st.button(
+                    "Перейти к оплате",
+                    key="checkout_open",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=open_checkout,
+                    args=(sid, package["id"]),
+                )
+        if not order:
+            comparing = st.session_state.get("compare_packages", False)
+            with change_col:
+                if st.button(
+                    "Скрыть варианты" if comparing else "Изменить пакет",
+                    key="compare_again",
+                    type="secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state.compare_packages = not comparing
+                    st.rerun()
+
+
+def render_packages(packages: list[dict], sid: str, selected_id: str | None) -> None:
+    """Нативные колонки Streamlit сохраняют равную высоту карточек."""
+    for start in range(0, len(packages), 3):
+        batch = packages[start : start + 3]
+        columns = st.columns(len(batch), gap="medium", border=True)
+        for column, package in zip(columns, batch):
+            with column:
+                render_package(package, sid, selected_id)
+
+
 def render_plan(plan: dict, sid: str) -> None:
     st.divider()
     st.header("Ваша поездка")
@@ -261,20 +416,19 @@ def render_plan(plan: dict, sid: str) -> None:
         if DEMO_PLAN_ENABLED
         else plan.get("selected_package_id")
     )
-    # Нативные bordered columns образуют равновысокую строку без вложенных контейнеров.
-    # На узких экранах Streamlit автоматически переносит колонки друг под друга.
-    for start in range(0, len(packages), 3):
-        batch = packages[start : start + 3]
-        columns = st.columns(len(batch), gap="medium", border=True)
-        for column, package in zip(columns, batch):
-            with column:
-                render_package(package, sid, selected_id)
-    if selected_id:
-        chosen = next((item for item in packages if item.get("id") == selected_id), None)
-        if chosen:
-            tier_name = TIER_LABELS.get(chosen.get("tier"), "Пакет")
-            st.success(f"Выбран пакет «{tier_name}» — {price(chosen.get('total'))}.")
-            st.caption("Корзину и оформление добавим во второй задаче.")
+    chosen = next((item for item in packages if item.get("id") == selected_id), None)
+    if chosen:
+        render_basket(chosen, plan, sid)
+        if st.session_state.get("compare_packages", False) and not plan.get("order"):
+            st.divider()
+            st.subheader("Другие варианты поездки")
+            render_packages(packages, sid, selected_id)
+        if st.session_state.get("checkout_dialog_open", False):
+            checkout_dialog(sid, chosen, plan.get("request") or {})
+            # Закрытие через X/ESC не вызывает rerun: избегаем повторного открытия.
+            st.session_state.checkout_dialog_open = False
+    else:
+        render_packages(packages, sid, selected_id)
 
 
 sid = session_id()
@@ -283,6 +437,9 @@ if st.session_state.get("active_sid") != sid:
     st.session_state.messages = load_history(sid)
     st.session_state.plan = load_plan(sid)
     st.session_state.demo_selected_package_id = None
+    st.session_state.checkout_attempt = None
+    st.session_state.checkout_dialog_open = False
+    st.session_state.compare_packages = False
 
 header_title, header_theme = st.columns([5, 1], vertical_alignment="center")
 with header_title:

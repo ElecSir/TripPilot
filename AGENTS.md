@@ -74,7 +74,14 @@ docker compose up --build -d
 curl -s http://localhost:8080/health
 ```
 
-Последняя команда должна вернуть `{"status":"ok"}`. Если что-то не прошло, так и скажи. Не выдавай непроверенное за готовое.
+Последняя команда должна вернуть `{"status":"ok"}`. Если менялись БД, репозитории или миграции, дополнительно:
+
+```bash
+docker compose --profile tests run --rm --build tests
+docker compose run --rm bootstrap alembic check
+```
+
+Интеграционные тесты лежат в `tests/integration/` и без БД пропускаются. Если что-то не прошло, так и скажи. Не выдавай непроверенное за готовое.
 
 ## Git
 

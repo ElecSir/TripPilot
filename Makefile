@@ -1,7 +1,7 @@
 UV_IMAGE := ghcr.io/astral-sh/uv:0.9.5-python3.12-bookworm-slim
 DEV_IMAGE := trip-pilot-dev
 
-.PHONY: up down reset logs seed tools dev-image test test-integration lint lock
+.PHONY: up down reset logs seed tools dev-image test test-integration lint ci lock
 
 up:         ## поднять всё, как у жюри
 	docker compose up --build
@@ -32,6 +32,9 @@ test-integration:  ## тесты на настоящем Postgres (подним�
 
 lint: dev-image
 	docker run --rm $(DEV_IMAGE) ruff check src tests migrations
+
+ci:         ## все шаги CI, как в GitHub Actions
+	sh scripts/ci.sh
 
 lock:       ## обновить uv.lock без локально установленного uv
 	docker run --rm -v "$(CURDIR):/app" -w /app $(UV_IMAGE) uv lock

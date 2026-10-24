@@ -118,13 +118,22 @@ docker compose run --rm bootstrap      # применить
 docker compose run --rm bootstrap alembic check   # ORM и БД совпадают?
 ```
 
-**Тесты и линтер** (локальный Python не нужен, всё идёт в контейнере):
+**Локальный CI** — все шаги GitHub Actions одной командой: линтер, юнит-тесты, запуск стека и `/health`, миграции, интеграционные тесты. Actions вызывает этот же скрипт, поэтому «прошло локально» = «прошло бы в CI». Локальный Python не нужен, всё идёт в контейнерах.
+
+```bash
+sh scripts/ci.sh                                           # Git Bash, Linux, macOS (или make ci)
+& "C:\Program Files\Git\bin\sh.exe" scripts/ci.sh          # PowerShell на Windows
+```
+
+Отдельные шаги:
 
 ```bash
 make test        # или: docker build -f docker/app.Dockerfile --target dev -t trip-pilot-dev . && docker run --rm trip-pilot-dev pytest
 make lint
 make test-integration   # или: docker compose --profile tests run --rm tests (поднимет БД и прогонит миграции)
 ```
+
+**GitHub Actions** запускается только на pull request, кроме черновиков и PR, где менялась только документация (`*.md`, `docs/`, `tasks/`). Новый push в PR отменяет устаревший прогон. Ручной запуск: Actions → CI → Run workflow.
 
 **Зависимости:** добавить пакет в `pyproject.toml`, затем `make lock` обновит `uv.lock` (uv запускается в контейнере).
 

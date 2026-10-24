@@ -64,24 +64,16 @@ src/trip_pilot/
 
 ## Проверка перед словом «готово»
 
-Запусти и убедись, что всё прошло:
+Запусти все шаги CI одной командой и убедись, что в конце написано «Все шаги CI прошли»:
 
 ```bash
-docker build -f docker/app.Dockerfile --target dev -t trip-pilot-dev .
-docker run --rm trip-pilot-dev ruff check src tests migrations
-docker run --rm trip-pilot-dev pytest
-docker compose up --build -d
-curl -s http://localhost:8080/health
+sh scripts/ci.sh                                    # Git Bash, Linux, macOS
+& "C:\Program Files\Git\bin\sh.exe" scripts/ci.sh   # PowerShell на Windows
 ```
 
-Последняя команда должна вернуть `{"status":"ok"}`. Если менялись БД, репозитории или миграции, дополнительно:
+Это тот же скрипт, что запускает GitHub Actions: линтер, юнит-тесты, стек и `/health`, одна голова Alembic и `alembic check`, интеграционные тесты (`tests/integration/`, без БД пропускаются). Пока шаги идут по отдельности, удобно гонять только нужный: команды есть в `scripts/ci.sh`.
 
-```bash
-docker compose --profile tests run --rm --build tests
-docker compose run --rm bootstrap alembic check
-```
-
-Интеграционные тесты лежат в `tests/integration/` и без БД пропускаются. Если что-то не прошло, так и скажи. Не выдавай непроверенное за готовое.
+GitHub Actions в организации может не запускаться из-за лимита минут. Поэтому прогон `scripts/ci.sh` локально перед PR обязателен, а его итог указывается в описании PR. Если что-то не прошло, так и скажи. Не выдавай непроверенное за готовое.
 
 ## Git
 

@@ -53,12 +53,12 @@ src/trip_pilot/
 
 | Роль | Ветка | Задание | Владеет |
 |---|---|---|---|
-| лид | `team/lead` | `tasks/lead.md` | `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/actions.py`, `agent/orchestrator.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/` |
+| лид | `team/lead` | `tasks/lead.md` | `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/actions.py`, `agent/toolkit.py`, `agent/orchestrator.py`, `agent/dates.py`, `agent/texts.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/` |
 | rag | `team/rag` | `tasks/rag.md` | `rag/`, `data/knowledge/`, `adapters/llm/`, `adapters/db/knowledge.py`, `services/memory.py`, `evals/` |
 | data | `team/data` | `tasks/data.md` | `seed/`, `data/reference/`, `adapters/sources/`, `adapters/db/{reference,inventory}.py`, `planning/` |
 | ui | `team/ui` | `tasks/ui.md` | `ui/`, `.streamlit/`, `agent/intent.py`, `agent/clarifier.py`, `agent/prompts/`, `services/explanation.py` |
 
-**Контракты** (`domain/`, `ports.py`, `agent/events.py`, `agent/actions.py`, формат события `plan`, маршруты API, `tests/fakes.py`) меняет только лид. Нужна правка контракта или файла чужой зоны — **остановись** и опиши человеку, что и зачем нужно изменить. Не правь сам.
+**Контракты** (`domain/`, `ports.py`, `agent/events.py`, `agent/actions.py`, `agent/toolkit.py` — сигнатуры функций ui и data, которые вызывает оркестратор, формат события `plan`, маршруты API, `tests/fakes.py`) меняет только лид. Свою функцию из `agent/toolkit.py` реализуй строго с этой сигнатурой: оркестратор вызывает её именно так. Нужна правка контракта или файла чужой зоны — **остановись** и опиши человеку, что и зачем нужно изменить. Не правь сам.
 
 Миграции Alembic создаёт любая зона, но только для своих таблиц. Если после `git pull origin main` у Alembic две головы (`alembic heads`), исправь `down_revision` своей новой миграции на актуальную голову.
 

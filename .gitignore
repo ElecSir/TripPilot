@@ -1,4 +1,13 @@
+# Секреты: любые .env-файлы, кроме примера, ключи и сертификаты
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
 docker-compose.override.yml
 
 __pycache__/

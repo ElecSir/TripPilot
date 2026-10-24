@@ -35,6 +35,16 @@ jobs:
           docker compose logs
           exit 1
 
+      - name: Миграции — одна голова Alembic, схема совпадает с моделями
+        run: |
+          heads=$(docker compose run --rm -T bootstrap alembic heads | grep -c '(head)')
+          echo "голов Alembic: $heads"
+          test "$heads" -eq 1
+          docker compose run --rm -T bootstrap alembic check
+
+      - name: Интеграционные тесты на Postgres
+        run: docker compose --profile tests run --rm -T tests
+
       - name: Остановить стек
         if: always()
         run: docker compose down -v

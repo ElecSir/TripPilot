@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 
 from trip_pilot.agent.events import (
     DeltaEvent,
@@ -27,7 +28,8 @@ def test_sse_roundtrip_keeps_event_type():
 
 def test_stub_orchestrator_streams_reply_and_finishes():
     async def collect():
-        return [event async for event in StubOrchestrator().handle("в Сочи на выходные")]
+        orchestrator = StubOrchestrator()
+        return [event async for event in orchestrator.handle(uuid.uuid4(), "в Сочи на выходные")]
 
     events = asyncio.run(collect())
 

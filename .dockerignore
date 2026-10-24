@@ -2,7 +2,14 @@
 .github
 .gitignore
 .gitattributes
+# Секреты не должны попасть в образ: ни .env-файлы, ни ключи, ни сертификаты
 .env
+.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+secrets
 .venv
 **/__pycache__
 **/*.py[cod]
@@ -10,6 +17,9 @@
 .ruff_cache
 .mypy_cache
 docs
+tasks
 docker-compose*.yml
 Makefile
 README.md
+AGENTS.md
+CLAUDE.md

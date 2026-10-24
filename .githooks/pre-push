@@ -1,0 +1,11 @@
+#!/bin/sh
+# Запрет прямого push в main: в main всё попадает только через PR из team/<роль>.
+# Защита веток на GitHub в приватном репозитории бесплатного тарифа не работает, это её замена.
+# Подключение один раз на клон: git config core.hooksPath .githooks
+while read -r local_ref local_sha remote_ref remote_sha; do
+    if [ "$remote_ref" = "refs/heads/main" ]; then
+        echo "pre-push: push напрямую в main запрещён. Откройте PR из своей ветки team/<роль>."
+        exit 1
+    fi
+done
+exit 0

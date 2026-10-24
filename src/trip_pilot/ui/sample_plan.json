@@ -8,58 +8,197 @@
     "origin": "moscow",
     "destination": "antalya",
     "month": 11,
-    "date_from": "2026-11-14",
-    "nights": 7,
-    "party": {"adults": 2, "children_ages": [5], "pets": []},
+    "date_from": null,
+    "nights": null,
+    "party": {
+      "adults": 2,
+      "children_ages": [
+        5
+      ],
+      "pets": []
+    },
     "budget": "150000",
-    "tags": ["sea", "warm"],
+    "tags": [
+      "sea",
+      "warm"
+    ],
     "must": [],
     "assumptions": [
-      {"field": "origin", "value": "moscow", "reason": "Город вылета не указан"},
-      {"field": "nights", "value": "7", "reason": "«на неделю»"}
+      {
+        "field": "origin",
+        "value": "moscow",
+        "reason": "Город вылета не указан"
+      }
     ]
   },
   "packages": [
     {
-      "id": "demo-economy", "tier": "economy", "total": "118400.00", "nights": 7,
-      "destination": "antalya", "check_in": "2026-11-14", "check_out": "2026-11-21",
-      "hotel": {"name": "Coastline Garden Hotel (демо)", "stars": 3},
-      "outbound": {"from": "Москва", "to": "Анталья", "departure": "2026-11-14T07:15:00+03:00", "arrival": "2026-11-14T12:05:00+03:00", "direct": true},
-      "inbound": {"from": "Анталья", "to": "Москва", "departure": "2026-11-21T14:10:00+03:00", "arrival": "2026-11-21T19:00:00+03:00", "direct": true},
-      "transfer": {"included": true, "description": "Групповой трансфер"},
-      "price_breakdown": {"flight": "54000.00", "hotel": "56400.00", "transfer": "8000.00"},
-      "why": ["Вписывается в указанный бюджет", "Прямой перелёт в обе стороны"],
-      "tradeoffs": ["Отель категории 3 звезды", "Групповой трансфер"],
-      "issues": ["Возврат билетов ограничен"],
-      "risks": ["Стоимость актуальна только для демонстрации"]
+      "id": "demo-economy",
+      "tier": "economy",
+      "total": "118400.00",
+      "nights": 7,
+      "destination": "antalya",
+      "check_in": "2026-11-14",
+      "check_out": "2026-11-21",
+      "hotel": {
+        "name": "Coastline Garden Hotel (демо)",
+        "stars": 3
+      },
+      "outbound": {
+        "from": "Москва",
+        "to": "Анталья",
+        "departure": "2026-11-14T07:15:00+03:00",
+        "arrival": "2026-11-14T12:05:00+03:00",
+        "direct": true
+      },
+      "inbound": {
+        "from": "Анталья",
+        "to": "Москва",
+        "departure": "2026-11-21T14:10:00+03:00",
+        "arrival": "2026-11-21T19:00:00+03:00",
+        "direct": true
+      },
+      "transfer": {
+        "included": true,
+        "description": "Групповой трансфер"
+      },
+      "price_breakdown": {
+        "flight": "54000.00",
+        "hotel": "56400.00",
+        "transfer": "8000.00"
+      },
+      "why": [
+        "Вписывается в указанный бюджет",
+        "Прямой перелёт в обе стороны"
+      ],
+      "tradeoffs": [
+        "Отель категории 3 звезды",
+        "Групповой трансфер"
+      ],
+      "issues": [
+        "Возврат билетов ограничен"
+      ],
+      "risks": [
+        "Стоимость актуальна только для демонстрации"
+      ]
     },
     {
-      "id": "demo-comfort", "tier": "comfort", "total": "137900.00", "nights": 7,
-      "destination": "antalya", "check_in": "2026-11-14", "check_out": "2026-11-21",
-      "hotel": {"name": "Azure Bay Resort (демо)", "stars": 4},
-      "outbound": {"from": "Москва", "to": "Анталья", "departure": "2026-11-14T10:20:00+03:00", "arrival": "2026-11-14T15:00:00+03:00", "direct": true},
-      "inbound": {"from": "Анталья", "to": "Москва", "departure": "2026-11-21T16:40:00+03:00", "arrival": "2026-11-21T21:25:00+03:00", "direct": true},
-      "transfer": {"included": true, "description": "Индивидуальный трансфер"},
-      "price_breakdown": {"flight": "62000.00", "hotel": "66900.00", "transfer": "9000.00"},
-      "why": ["Вписывается в бюджет", "Отель категории 4 звезды", "Индивидуальный трансфер"],
-      "tradeoffs": ["Дороже эконом-варианта"],
-      "issues": [], "risks": ["Стоимость актуальна только для демонстрации"]
+      "id": "demo-comfort",
+      "tier": "comfort",
+      "total": "137900.00",
+      "nights": 7,
+      "destination": "antalya",
+      "check_in": "2026-11-14",
+      "check_out": "2026-11-21",
+      "hotel": {
+        "name": "Azure Bay Resort (демо)",
+        "stars": 4
+      },
+      "outbound": {
+        "from": "Москва",
+        "to": "Анталья",
+        "departure": "2026-11-14T10:20:00+03:00",
+        "arrival": "2026-11-14T15:00:00+03:00",
+        "direct": true
+      },
+      "inbound": {
+        "from": "Анталья",
+        "to": "Москва",
+        "departure": "2026-11-21T16:40:00+03:00",
+        "arrival": "2026-11-21T21:25:00+03:00",
+        "direct": true
+      },
+      "transfer": {
+        "included": true,
+        "description": "Индивидуальный трансфер"
+      },
+      "price_breakdown": {
+        "flight": "62000.00",
+        "hotel": "66900.00",
+        "transfer": "9000.00"
+      },
+      "why": [
+        "Вписывается в бюджет",
+        "Отель категории 4 звезды",
+        "Индивидуальный трансфер"
+      ],
+      "tradeoffs": [
+        "Дороже эконом-варианта"
+      ],
+      "issues": [],
+      "risks": [
+        "Стоимость актуальна только для демонстрации"
+      ]
     },
     {
-      "id": "demo-premium", "tier": "premium", "total": "169500.00", "nights": 7,
-      "destination": "antalya", "check_in": "2026-11-14", "check_out": "2026-11-21",
-      "hotel": {"name": "Sunset Grand Palace (демо)", "stars": 5},
-      "outbound": {"from": "Москва", "to": "Анталья", "departure": "2026-11-14T09:00:00+03:00", "arrival": "2026-11-14T13:50:00+03:00", "direct": true},
-      "inbound": {"from": "Анталья", "to": "Москва", "departure": "2026-11-21T18:00:00+03:00", "arrival": "2026-11-21T22:50:00+03:00", "direct": true},
-      "transfer": {"included": true, "description": "Индивидуальный трансфер"},
-      "price_breakdown": {"flight": "72000.00", "hotel": "87500.00", "transfer": "10000.00"},
-      "why": ["Отель категории 5 звёзд", "Прямые перелёты", "Индивидуальный трансфер"],
-      "tradeoffs": ["Превышает бюджет на 19 500 ₽"],
-      "issues": ["Превышение бюджета"],
-      "risks": ["Стоимость актуальна только для демонстрации"]
+      "id": "demo-premium",
+      "tier": "premium",
+      "total": "169500.00",
+      "nights": 7,
+      "destination": "antalya",
+      "check_in": "2026-11-14",
+      "check_out": "2026-11-21",
+      "hotel": {
+        "name": "Sunset Grand Palace (демо)",
+        "stars": 5
+      },
+      "outbound": {
+        "from": "Москва",
+        "to": "Анталья",
+        "departure": "2026-11-14T09:00:00+03:00",
+        "arrival": "2026-11-14T13:50:00+03:00",
+        "direct": true
+      },
+      "inbound": {
+        "from": "Анталья",
+        "to": "Москва",
+        "departure": "2026-11-21T18:00:00+03:00",
+        "arrival": "2026-11-21T22:50:00+03:00",
+        "direct": true
+      },
+      "transfer": {
+        "included": true,
+        "description": "Индивидуальный трансфер"
+      },
+      "price_breakdown": {
+        "flight": "72000.00",
+        "hotel": "87500.00",
+        "transfer": "10000.00"
+      },
+      "why": [
+        "Отель категории 5 звёзд",
+        "Прямые перелёты",
+        "Индивидуальный трансфер"
+      ],
+      "tradeoffs": [
+        "Превышает бюджет на 19 500 ₽"
+      ],
+      "issues": [
+        "Превышение бюджета"
+      ],
+      "risks": [
+        "Стоимость актуальна только для демонстрации"
+      ]
     }
   ],
   "pending_question": null,
   "selected_package_id": null,
-  "order": null
+  "order": null,
+  "search": {
+    "check_in": "2026-11-14",
+    "check_out": "2026-11-21",
+    "nights": 7,
+    "assumptions": [
+      {
+        "field": "nights",
+        "value": "7",
+        "reason": "Длительность не указана — неделя"
+      },
+      {
+        "field": "date_from",
+        "value": "2026-11-14",
+        "reason": "Для демонстрации выбран заезд 14 ноября"
+      }
+    ]
+  }
 }

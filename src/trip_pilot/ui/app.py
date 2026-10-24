@@ -172,7 +172,10 @@ def render_points(label: str, values: list, *, warning: bool = False) -> None:
 
 
 def render_assumptions(plan: dict) -> None:
-    assumptions = plan.get("request", {}).get("assumptions", [])
+    assumptions = (
+        (plan.get("request") or {}).get("assumptions", [])
+        + ((plan.get("search") or {}).get("assumptions", []))
+    )
     if not assumptions:
         return
     st.markdown("**Допущения агента**")
@@ -393,7 +396,7 @@ def render_packages(packages: list[dict], sid: str, selected_id: str | None) -> 
     for start in range(0, len(packages), 3):
         batch = packages[start : start + 3]
         columns = st.columns(len(batch), gap="medium", border=True)
-        for column, package in zip(columns, batch):
+        for column, package in zip(columns, batch, strict=True):
             with column:
                 render_package(package, sid, selected_id)
 

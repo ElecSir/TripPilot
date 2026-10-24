@@ -2,7 +2,6 @@
 
 from string import Template
 
-
 PALETTES = {
     "dark": {
         "bg": "#101827",

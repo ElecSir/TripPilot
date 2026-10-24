@@ -1,7 +1,7 @@
 UV_IMAGE := ghcr.io/astral-sh/uv:0.9.5-python3.12-bookworm-slim
 DEV_IMAGE := trip-pilot-dev
 
-.PHONY: up down reset logs seed tools dev-image test lint lock
+.PHONY: up down reset logs seed tools dev-image test test-integration lint lock
 
 up:         ## поднять всё, как у жюри
 	docker compose up --build
@@ -26,6 +26,9 @@ dev-image:
 
 test: dev-image
 	docker run --rm $(DEV_IMAGE) pytest
+
+test-integration:  ## тесты на настоящем Postgres (поднимет db и прогонит миграции)
+	docker compose --profile tests run --rm --build tests
 
 lint: dev-image
 	docker run --rm $(DEV_IMAGE) ruff check src tests migrations

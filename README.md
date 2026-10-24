@@ -59,7 +59,7 @@ docker compose down -v                 # удалить данные БД цел
 - `POST /api/chat` — `{"session_id": "<uuid>", "text": "..."}` или `{"session_id": "<uuid>", "action": {"type": "select_package", "package_id": "p2"}}` → поток событий агента (`text/event-stream`)
 - `GET /api/chat/{session_id}/messages` — история диалога
 - `GET /api/trips/{session_id}` — текущий план поездки (`TripState`); пока плана нет, `404`
-- `POST /api/orders` — `{"session_id", "package_id", "idempotency_key"}` → заказ (имитация оплаты); контракт опубликован, реализация в работе (`501`)
+- `POST /api/orders` — `{"session_id", "package_id", "idempotency_key"}` → `201` и заказ `TP-<год>-<номер>` (оплата имитируется). Повтор с тем же ключом или по тому же пакету возвращает тот же заказ; нет плана или пакета — `404`; по плану уже оплачен другой пакет — `409`
 - Тестовый пользователь не нужен: авторизации пока нет. Диалог привязан к `?sid=` в адресе страницы.
 
 Протокол событий (`src/trip_pilot/agent/events.py`), одна строка SSE на событие:
@@ -92,7 +92,7 @@ migrations/       # Alembic
 data/             # справочники и документы для RAG
 docker/           # Dockerfile, конфиг nginx, pgAdmin
 docs/             # документация
-tests/            # pytest; tests/fakes.py — фейки всех портов для тестов без БД и LLM
+tests/            # pytest: unit/ на фейках (tests/fakes.py), integration/ на настоящем Postgres
 .github/          # CI: линтер, тесты, запуск стека и проверка /health
 ```
 
@@ -123,6 +123,7 @@ docker compose run --rm bootstrap alembic check   # ORM и БД совпадаю
 ```bash
 make test        # или: docker build -f docker/app.Dockerfile --target dev -t trip-pilot-dev . && docker run --rm trip-pilot-dev pytest
 make lint
+make test-integration   # или: docker compose --profile tests run --rm tests (поднимет БД и прогонит миграции)
 ```
 
 **Зависимости:** добавить пакет в `pyproject.toml`, затем `make lock` обновит `uv.lock` (uv запускается в контейнере).

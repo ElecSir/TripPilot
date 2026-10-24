@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Iterator
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from html import escape
 from pathlib import Path
 
 import httpx
@@ -21,6 +22,7 @@ from trip_pilot.agent.events import (
     parse_event,
 )
 from trip_pilot.config import get_settings
+from trip_pilot.ui.theme import theme_css
 
 LOGGER = logging.getLogger(__name__)
 DEMO_PLAN_ENABLED = True  # Отключить после интеграции события plan.
@@ -38,6 +40,11 @@ STAGE_LABELS = {
 }
 
 st.set_page_config(page_title="TripPilot", page_icon="🧳", layout="wide")
+
+
+def apply_theme(dark: bool) -> None:
+    """Применяет палитру без привязки карточек к внутренним wrapper Streamlit."""
+    st.markdown(theme_css(dark), unsafe_allow_html=True)
 
 
 @st.cache_resource
@@ -85,7 +92,9 @@ def load_plan(sid: str) -> dict:
         return {}
 
 
-def stream_events(sid: str, text: str | None = None, action: dict | None = None) -> Iterator[AgentEvent]:
+def stream_events(
+    sid: str, text: str | None = None, action: dict | None = None
+) -> Iterator[AgentEvent]:
     payload = {"session_id": sid}
     if action is not None:
         payload["action"] = action
@@ -170,8 +179,13 @@ def render_assumptions(plan: dict) -> None:
         field = assumption.get("field", "")
         value = assumption.get("value", "")
         label = ASSUMPTION_LABELS.get(field, str(value))
-        chips.append(f"`{label} ✎`")
-    st.markdown("  ".join(chips))
+        chips.append(
+            f'<span class="trip-chip">{escape(label)} <span aria-hidden="true">✎</span></span>'
+        )
+    st.markdown(
+        '<div class="trip-chip-list">' + "".join(chips) + "</div>",
+        unsafe_allow_html=True,
+    )
     with st.expander("Почему агент сделал эти допущения?"):
         for assumption in assumptions:
             st.write(f"{assumption.get('field', 'Поле')}: {assumption.get('reason', 'Не указано')}")
@@ -193,34 +207,40 @@ def render_package(package: dict, sid: str, selected_id: str | None) -> None:
     hotel = package.get("hotel") or {}
     transfer = package.get("transfer") or {}
     tier = TIER_LABELS.get(package.get("tier"), package.get("tier", "Пакет"))
-    with st.container(border=True):
-        st.subheader(tier)
-        st.metric("Стоимость всей поездки", price(package.get("total")))
-        st.caption(f"{package.get('nights', '—')} ночей · за всех путешественников")
-        stars = hotel.get("stars")
-        stars_label = f" · {stars}★" if stars else ""
-        st.markdown(f"**🏨 {hotel.get('name', 'Отель уточняется')}{stars_label}**")
-        st.markdown("**✈️ Туда**")
-        st.write(flight_text(package.get("outbound")))
-        st.markdown("**✈️ Обратно**")
-        st.write(flight_text(package.get("inbound")))
-        transfer_label = transfer.get("description") or "Информация уточняется"
-        if transfer.get("included") is False:
-            transfer_label += " · не включён"
-        st.markdown(f"**🚐 Трансфер:** {transfer_label}")
-        render_points("Почему подходит", package.get("why") or [])
-        render_points("Чем жертвуем", package.get("tradeoffs") or [])
-        render_points("Риски", (package.get("issues") or []) + (package.get("risks") or []), warning=True)
-        selected = selected_id == package_id
-        st.button(
-            "✓ Выбрано" if selected else "Выбрать",
-            key=f"select_{package_id}",
-            type="primary" if selected else "secondary",
-            use_container_width=True,
-            disabled=selected or not package_id,
-            on_click=select_package,
-            args=(sid, package_id),
-        )
+    st.markdown(
+        f'<h3 class="trip-card-marker">{escape(str(tier))}</h3>',
+        unsafe_allow_html=True,
+    )
+    st.metric("Стоимость всей поездки", price(package.get("total")))
+    st.caption(f"{package.get('nights', '—')} ночей · за всех путешественников")
+    stars = hotel.get("stars")
+    stars_label = f" · {stars}★" if stars else ""
+    st.markdown(f"**🏨 {hotel.get('name', 'Отель уточняется')}{stars_label}**")
+    st.markdown("**✈️ Туда**")
+    st.write(flight_text(package.get("outbound")))
+    st.markdown("**✈️ Обратно**")
+    st.write(flight_text(package.get("inbound")))
+    transfer_label = transfer.get("description") or "Информация уточняется"
+    if transfer.get("included") is False:
+        transfer_label += " · не включён"
+    st.markdown(f"**🚐 Трансфер:** {transfer_label}")
+    render_points("Почему подходит", package.get("why") or [])
+    render_points("Чем жертвуем", package.get("tradeoffs") or [])
+    render_points(
+        "Риски",
+        (package.get("issues") or []) + (package.get("risks") or []),
+        warning=True,
+    )
+    selected = selected_id == package_id
+    st.button(
+        "✓ Выбрано" if selected else "Выбрать",
+        key=f"select_{package_id}",
+        type="primary" if selected else "secondary",
+        use_container_width=True,
+        disabled=selected or not package_id,
+        on_click=select_package,
+        args=(sid, package_id),
+    )
 
 
 def render_plan(plan: dict, sid: str) -> None:
@@ -241,15 +261,19 @@ def render_plan(plan: dict, sid: str) -> None:
         if DEMO_PLAN_ENABLED
         else plan.get("selected_package_id")
     )
-    # Streamlit перестраивает колонки в вертикальный стек на узких экранах.
-    columns = st.columns(3, gap="medium") if len(packages) >= 3 else st.columns(len(packages))
-    for index, package in enumerate(packages):
-        with columns[index % len(columns)]:
-            render_package(package, sid, selected_id)
+    # Нативные bordered columns образуют равновысокую строку без вложенных контейнеров.
+    # На узких экранах Streamlit автоматически переносит колонки друг под друга.
+    for start in range(0, len(packages), 3):
+        batch = packages[start : start + 3]
+        columns = st.columns(len(batch), gap="medium", border=True)
+        for column, package in zip(columns, batch):
+            with column:
+                render_package(package, sid, selected_id)
     if selected_id:
         chosen = next((item for item in packages if item.get("id") == selected_id), None)
         if chosen:
-            st.success(f"Выбран пакет «{TIER_LABELS.get(chosen.get('tier'), 'Пакет')}» — {price(chosen.get('total'))}.")
+            tier_name = TIER_LABELS.get(chosen.get("tier"), "Пакет")
+            st.success(f"Выбран пакет «{tier_name}» — {price(chosen.get('total'))}.")
             st.caption("Корзину и оформление добавим во второй задаче.")
 
 
@@ -260,7 +284,12 @@ if st.session_state.get("active_sid") != sid:
     st.session_state.plan = load_plan(sid)
     st.session_state.demo_selected_package_id = None
 
-st.title("TripPilot")
+header_title, header_theme = st.columns([5, 1], vertical_alignment="center")
+with header_title:
+    st.title("TripPilot")
+with header_theme:
+    dark_mode = st.toggle("Тёмная тема", key="ui_dark_mode")
+apply_theme(dark_mode)
 st.caption("Опишите поездку своими словами: куда, когда, с кем и на какой бюджет.")
 
 # Чат использует всю доступную ширину, а три карточки — полноценную сетку ниже.

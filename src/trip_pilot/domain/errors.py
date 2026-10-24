@@ -5,6 +5,7 @@
 Инфраструктурные сбои (БД, сеть, LLM) сюда не относятся: это обычные исключения.
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -43,4 +44,31 @@ class NoResults:
     reason: str
 
 
-DomainError = MissingSlot | UnknownCity | AmbiguousCity | DatesInPast | BudgetTooLow | NoResults
+# Ошибки оформления заказа.
+
+
+@dataclass(frozen=True)
+class PlanNotFound:
+    session_id: uuid.UUID
+
+
+@dataclass(frozen=True)
+class PackageNotInPlan:
+    package_id: str
+
+
+@dataclass(frozen=True)
+class AlreadyOrdered:
+    order_id: str  # по плану уже оформлен заказ на другой пакет
+
+
+@dataclass(frozen=True)
+class IdempotencyConflict:
+    key: str  # ключ уже использован для другого пакета
+
+
+BookingError = PlanNotFound | PackageNotInPlan | AlreadyOrdered | IdempotencyConflict
+
+RequestError = MissingSlot | UnknownCity | AmbiguousCity | DatesInPast | BudgetTooLow | NoResults
+
+DomainError = RequestError | BookingError

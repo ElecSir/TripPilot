@@ -175,10 +175,17 @@ class TripStateRepository(Protocol):
 7. `select_package` → `plan` с `selected_package_id`.
 
 События `step` по ходу: «Ищу перелёты Москва → Анталья…».
-- [ ] на фейках юнит-тест проходит все ветки: уточнение, выбор направления, пакеты, изменение, выбор пакета
+- [x] на фейках юнит-тест проходит все ветки: уточнение, выбор направления, пакеты, изменение, выбор пакета (`tests/unit/test_orchestrator.py`)
+
+Решения по дизайну (24.10):
+- ответ на вопрос разбирает `clarifier.apply_answer` (ui) по `PendingQuestion.slot`;
+- даты поиска считает оркестратор (`agent/dates.py`): ближайшая суббота месяца не раньше чем через 3 дня, 7 ночей по умолчанию. Результат — `TripState.search`, запрос пользователя остаётся как есть;
+- тексты резюме — шаблоны в `agent/texts.py`;
+- в приложении пока `StubOrchestrator`, `MvpOrchestrator` подключается в задаче 3;
+- сигнатуры функций ui и data зафиксированы в `agent/toolkit.py`.
 
 ### 3. Подключение реальных адаптеров
-В `api/main.py` подставить репозитории data и `KnowledgeBase` rag вместо фейков.
+В `api/main.py` подставить репозитории data и `KnowledgeBase` rag вместо фейков, собрать `Toolkit` из функций ui и data и заменить `StubOrchestrator` на `MvpOrchestrator`.
 - [ ] в `docker compose up` тот же путь работает на синтетике из БД
 
 ### 4. Заказы и имитация оплаты
@@ -221,3 +228,4 @@ git switch team/lead
 | 2026-10-23 | первая версия |
 | 2026-10-23 | шаг 0 выполнен в коде (кроме merge в `main`). Уточнения по ходу: `EMBEDDING_DIM` живёт в `knowledge.py`; `children_ages` допускает `None` («возраст не известен»); `LLMUnavailable` объявлен в `ports.py`; действия вынесены в `agent/actions.py`; критерий 0.5 сужен до «фейки реализуют порты и данных хватает на три пакета» — сами пакеты собирает data |
 | 2026-10-24 | задачи 1 и 4 сделаны (кроме F5, который ждёт оркестратора и UI). Задача 4 зависит от 1. Добавлены доменные ошибки бронирования (`BookingError`), `sample_package()` в `tests/fakes.py`, интеграционные тесты и сервис `tests` в compose; в CI — проверка одной головы Alembic (часть задачи 5) |
+| 2026-10-24 | задача 2 сделана. Изменения контракта: `PendingQuestion.slot` (обязательное поле), `TripState.search` (`SearchWindow`), `agent/toolkit.py` с сигнатурами функций ui и data; `clarifier.next_question` теперь возвращает `PendingQuestion`, добавлена `clarifier.apply_answer`. Текст вопроса сохраняется в историю чата |

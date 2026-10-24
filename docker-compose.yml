@@ -10,7 +10,7 @@ x-app: &app
     - path: .env
       required: false            # поднимется и без cp .env.example .env
   environment:
-    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trip}:${POSTGRES_PASSWORD:-trip}@db:5432/${POSTGRES_DB:-trip}
+    DATABASE_URL: &db_url postgresql+asyncpg://${POSTGRES_USER:-trip}:${POSTGRES_PASSWORD:-trip}@db:5432/${POSTGRES_DB:-trip}
 
 services:
   db:
@@ -98,6 +98,21 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  tests:                         # интеграционные тесты на настоящем Postgres: docker compose --profile tests run --rm tests
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+      target: dev
+    profiles: ["tests"]
+    command: ["pytest", "tests/integration", "-p", "no:cacheprovider"]
+    environment:
+      DATABASE_URL: *db_url
+      INTEGRATION: "1"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

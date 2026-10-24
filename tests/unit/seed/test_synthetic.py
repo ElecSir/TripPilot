@@ -9,9 +9,9 @@ import pytest
 
 from trip_pilot.domain.offers import Destination
 from trip_pilot.seed.synthetic import (
+    _STAR_PRICE,
     FLIGHT_ORIGINS,
     HORIZON_DAYS,
-    _STAR_PRICE,
     Inventory,
     flight_minutes,
     generate_inventory,
@@ -26,10 +26,49 @@ TRAIN_PAIRS = {
 }
 
 
+# Копия справочника для тестов: в образе с тестами нет папки data/.
+# Поля: slug, страна, широта, долгота, часовой пояс, теги, тёплые месяцы.
+_MSK = "Europe/Moscow"
+_REFERENCE = [
+    ("moscow", "Россия", 55.7558, 37.6173, _MSK, ["city"], [5, 6, 7, 8, 9]),
+    ("spb", "Россия", 59.9386, 30.3141, _MSK, ["city"], [5, 6, 7, 8, 9]),
+    ("kazan", "Россия", 55.7963, 49.1088, _MSK, ["city"], [5, 6, 7, 8, 9]),
+    ("sochi", "Россия", 43.5855, 39.7231, _MSK, ["sea", "nature"], [6, 7, 8, 9]),
+    ("anapa", "Россия", 44.8946, 37.3165, _MSK, ["sea"], [6, 7, 8, 9]),
+    ("kaliningrad", "Россия", 54.7104, 20.4522, "Europe/Kaliningrad", ["city"], [5, 6, 7, 8, 9]),
+    ("murmansk", "Россия", 68.9585, 33.0827, _MSK, ["nature", "winter"], [6, 7, 8]),
+    (
+        "antalya", "Турция", 36.8969, 30.7133, "Europe/Istanbul", ["sea", "warm"],
+        [5, 6, 7, 8, 9, 10],
+    ),
+    (
+        "dubai", "ОАЭ", 25.2048, 55.2708, "Asia/Dubai", ["city", "sea", "warm"],
+        [11, 12, 1, 2, 3, 4],
+    ),
+    (
+        "sharm", "Египет", 27.9158, 34.33, "Africa/Cairo", ["sea", "warm", "nature"],
+        [4, 5, 6, 7, 8, 9, 10, 11],
+    ),
+    (
+        "phuket", "Таиланд", 7.8804, 98.3923, "Asia/Bangkok", ["sea", "warm", "nature"],
+        [11, 12, 1, 2, 3, 4],
+    ),
+    (
+        "nha-trang", "Вьетнам", 12.2388, 109.1967, "Asia/Ho_Chi_Minh", ["sea", "warm"],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    ),
+]
+
+
 @pytest.fixture(scope="module")
 def destinations() -> list[Destination]:
-    items = json.loads(REFERENCE.read_text(encoding="utf-8"))
-    return [Destination.model_validate(item) for item in items]
+    return [
+        Destination(
+            slug=slug, name=slug, country=country, lat=lat, lon=lon, timezone=tz,
+            tags=tags, warm_months=months,
+        )
+        for slug, country, lat, lon, tz, tags, months in _REFERENCE
+    ]
 
 
 @pytest.fixture(scope="module")
@@ -37,9 +76,12 @@ def inventory(destinations: list[Destination]) -> Inventory:
     return generate_inventory(destinations, TODAY)
 
 
-def test_reference_is_filled(destinations: list[Destination]):
-    assert len(destinations) == 12
-    for d in destinations:
+@pytest.mark.skipif(not REFERENCE.exists(), reason="в этом окружении нет папки data/")
+def test_reference_file_is_filled():
+    items = json.loads(REFERENCE.read_text(encoding="utf-8"))
+    assert len(items) == 12
+    for item in items:
+        d = Destination.model_validate(item)
         assert d.tags, d.slug
         assert d.warm_months, d.slug
         assert set(d.tags) <= {"sea", "city", "nature", "warm", "winter"}, d.slug
@@ -82,17 +124,14 @@ def test_season_makes_hotels_pricier(inventory: Inventory):
     assert markup("dubai") > markup("antalya") * 1.2
 
 
-def test_all_future_and_within_horizon(inventory: Inventory):
+def test_all_future_and_within_horizon(destinations: list[Destination], inventory: Inventory):
     now = datetime.now(UTC)
     last_day = TODAY + timedelta(days=HORIZON_DAYS)
     for leg in inventory.legs:
         assert leg.depart_at > datetime(TODAY.year, TODAY.month, TODAY.day, 23, 59, tzinfo=UTC)
         assert TODAY < leg.depart_at.date() <= last_day
     # относительно реальных часов тоже: генератор от «сегодня» всегда даёт будущее
-    fresh = generate_inventory(
-        [Destination.model_validate(i) for i in json.loads(REFERENCE.read_text("utf-8"))],
-        date.today(),
-    )
+    fresh = generate_inventory(destinations, date.today())
     assert all(leg.depart_at > now for leg in fresh.legs)
 
 

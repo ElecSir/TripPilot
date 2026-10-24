@@ -97,28 +97,63 @@ class FakeHotelSource:
         return [h for h in HOTELS if h.destination == destination]
 
 
-class FakeTransportSource:
+def _legs(origin: str, destination: str, day: date) -> list[Leg]:
     """Два рейса в день: утренний прямой подороже и вечерний с пересадкой подешевле."""
+    route = _ROUTES.get(destination if origin == "moscow" else origin)
+    if route is None or "moscow" not in (origin, destination) or origin == destination:
+        return []
+    minutes, base_price = route
+    options = [(time(8, 30), 0, minutes, base_price * Decimal("1.2")),
+               (time(19, 10), 1, minutes + 150, base_price * Decimal("0.8"))]
+    legs = []
+    for n, (start, stops, duration, price) in enumerate(options):
+        depart = datetime.combine(day, start, tzinfo=_TZ[origin])
+        legs.append(Leg(
+            id=_stable_id(origin, destination, day, n), mode="flight",
+            origin=origin, destination=destination,
+            depart_at=depart,
+            arrive_at=(depart + timedelta(minutes=duration)).astimezone(_TZ[destination]),
+            price=price.quantize(Decimal("1")), stops=stops, carrier="Демо Авиа",
+            baggage_included=stops == 0, pets_allowed=True,
+        ))
+    return legs
 
+
+def sample_package(
+    package_id: str = "p1",
+    *,
+    destination: str = "antalya",
+    day: date = date(2030, 11, 10),
+    nights: int = 7,
+    party: Party | None = None,
+) -> Package:
+    """Готовый пакет из фейковых данных для тестов и примеров UI.
+
+    Самый дешёвый рейс туда и обратно и самый дешёвый отель. Это не логика подбора:
+    её делает data в planning/.
+    """
+    party = party or Party()
+    back_day = day + timedelta(days=nights)
+    out = min(_legs("moscow", destination, day), key=lambda leg: leg.price)
+    back = min(_legs(destination, "moscow", back_day), key=lambda leg: leg.price)
+    hotels = [h for h in HOTELS if h.destination == destination]
+    hotel = min(hotels, key=lambda h: h.price_per_night)
+    transfer = next(t for t in TRANSFERS if t.hotel_id == hotel.id)
+    breakdown = {
+        "flights": (out.price + back.price) * party.travellers,
+        "hotel": hotel.price_per_night * nights,
+        "transfer": transfer.price * 2,
+    }
+    return Package(
+        id=package_id, tier="economy", destination=destination, outbound=out, inbound=back,
+        hotel=hotel, transfer=transfer, check_in=day, check_out=back_day, nights=nights,
+        total=sum(breakdown.values()), price_breakdown=breakdown,
+    )
+
+
+class FakeTransportSource:
     async def search(self, origin: str, destination: str, day: date, party: Party) -> list[Leg]:
-        route = _ROUTES.get(destination if origin == "moscow" else origin)
-        if route is None or "moscow" not in (origin, destination) or origin == destination:
-            return []
-        minutes, base_price = route
-        options = [(time(8, 30), 0, minutes, base_price * Decimal("1.2")),
-                   (time(19, 10), 1, minutes + 150, base_price * Decimal("0.8"))]
-        legs = []
-        for n, (start, stops, duration, price) in enumerate(options):
-            depart = datetime.combine(day, start, tzinfo=_TZ[origin])
-            legs.append(Leg(
-                id=_stable_id(origin, destination, day, n), mode="flight",
-                origin=origin, destination=destination,
-                depart_at=depart,
-                arrive_at=(depart + timedelta(minutes=duration)).astimezone(_TZ[destination]),
-                price=price.quantize(Decimal("1")), stops=stops, carrier="Демо Авиа",
-                baggage_included=stops == 0, pets_allowed=True,
-            ))
-        return legs
+        return _legs(origin, destination, day)
 
 
 class FakeTransferSource:
@@ -174,17 +209,20 @@ class FakeLLM:
 
 
 class FakeOrderRepository:
+    """Как SqlOrderRepository: ключ идемпотентности уникален в пределах сессии."""
+
     def __init__(self) -> None:
-        self.orders: dict[str, Order] = {}  # idempotency_key → заказ
+        self.orders: dict[tuple[uuid.UUID, str], Order] = {}
 
     async def create(self, session_id: uuid.UUID, package: Package, idempotency_key: str) -> Order:
-        if idempotency_key not in self.orders:
+        key = (session_id, idempotency_key)
+        if key not in self.orders:
             now = datetime.now(_TZ["moscow"])
-            self.orders[idempotency_key] = Order(
+            self.orders[key] = Order(
                 id=f"TP-{now.year}-{len(self.orders) + 1:06d}", package_id=package.id,
                 total=package.total, status="paid", created_at=now,
             )
-        return self.orders[idempotency_key]
+        return self.orders[key]
 
 
 class FakeTripStateRepository:

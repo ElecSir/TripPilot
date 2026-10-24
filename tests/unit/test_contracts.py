@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import ValidationError
 
-from tests.fakes import fake_sources
+from tests.fakes import fake_sources, sample_package
 from trip_pilot import ports
 from trip_pilot.domain.offers import Leg, Package
 from trip_pilot.domain.request import Party, TripRequest
@@ -22,28 +22,8 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def make_package(nights: int = 7) -> Package:
-    """Собирает эконом-пакет Москва → Анталья из фейков так, как это будет делать data."""
-    src = fake_sources()
-    party = Party(adults=2, children_ages=[5])
-    back_day = DAY + timedelta(days=nights)
-    outs = run(src.transport.search("moscow", "antalya", DAY, party))
-    backs = run(src.transport.search("antalya", "moscow", back_day, party))
-    hotels = run(src.hotels.search("antalya", DAY, back_day, party))
-    out = min(outs, key=lambda leg: leg.price)
-    back = min(backs, key=lambda leg: leg.price)
-    hotel = min(hotels, key=lambda h: h.price_per_night)
-    transfer = run(src.transfers.search(hotel.id, out.arrive_at, party))[0]
-    breakdown = {
-        "flights": (out.price + back.price) * party.travellers,
-        "hotel": hotel.price_per_night * nights,
-        "transfer": transfer.price * 2,
-    }
-    return Package(
-        id="p1", tier="economy", destination="antalya", outbound=out, inbound=back, hotel=hotel,
-        transfer=transfer, check_in=DAY, check_out=back_day, nights=nights,
-        total=sum(breakdown.values()), price_breakdown=breakdown,
-    )
+def make_package() -> Package:
+    return sample_package(day=DAY, party=Party(adults=2, children_ages=[5]))
 
 
 def test_fakes_implement_all_ports():

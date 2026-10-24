@@ -1,0 +1,25 @@
+#!/bin/sh
+# Проверка того, что сейчас коммитится, на секреты (gitleaks в Docker).
+# Секрет ловится до коммита, а не после push, когда его уже пришлось бы вычищать из истории.
+# Подключение один раз на клон: git config core.hooksPath .githooks
+GITLEAKS_IMAGE=zricethezav/gitleaks:v8.28.0
+LEAKS=3  # отдельный код, чтобы отличать найденный секрет от ошибки запуска
+
+if ! docker info >/dev/null 2>&1; then
+    echo "pre-commit: Docker не запущен, проверка секретов пропущена (CI проверит при PR)."
+    exit 0
+fi
+
+src=$(pwd -W 2>/dev/null || pwd)
+MSYS_NO_PATHCONV=1 docker run --rm -v "$src:/repo:ro" "$GITLEAKS_IMAGE" \
+    git /repo --staged --no-banner --redact --exit-code "$LEAKS"
+rc=$?
+
+if [ "$rc" -eq "$LEAKS" ]; then
+    echo "pre-commit: в коммите найден секрет (см. выше). Уберите его, ключи храните только в .env."
+    exit 1
+fi
+if [ "$rc" -ne 0 ]; then
+    echo "pre-commit: gitleaks не смог выполнить проверку (код $rc), коммит не блокирую."
+fi
+exit 0

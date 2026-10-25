@@ -50,6 +50,8 @@ class TripState(BaseModel):
     request: TripRequest | None = None  # что сказал пользователь
     search: SearchWindow | None = None  # даты последнего поиска
     packages: list[Package] = []
+    # Названия мест плана: slug → «Москва». В запросе и рейсах места — slug, имя UI берёт отсюда.
+    places: dict[str, str] = {}
     pending_question: PendingQuestion | None = None
     selected_package_id: str | None = None
     order: Order | None = None

@@ -184,6 +184,10 @@ class TripStateRepository(Protocol):
 - в приложении пока `StubOrchestrator`, `MvpOrchestrator` подключается в задаче 3;
 - сигнатуры функций ui и data зафиксированы в `agent/toolkit.py`.
 
+### 2а. Названия мест в плане
+В запросе и рейсах места — slug, и UI нечего показать человеку. `TripState.places` (slug → название) заполняется оркестратором на каждом ходу для всех мест плана.
+- [x] поле в контракте, заполнение в `MvpOrchestrator`, тесты; задание ui обновлено
+
 ### 3. Подключение реальных адаптеров
 В `api/main.py` подставить репозитории data и `KnowledgeBase` rag вместо фейков, собрать `Toolkit` из функций ui и data и заменить `StubOrchestrator` на `MvpOrchestrator`.
 - [ ] в `docker compose up` тот же путь работает на синтетике из БД
@@ -231,3 +235,4 @@ git switch team/lead
 | 2026-10-24 | задача 2 сделана. Изменения контракта: `PendingQuestion.slot` (обязательное поле), `TripState.search` (`SearchWindow`), `agent/toolkit.py` с сигнатурами функций ui и data; `clarifier.next_question` теперь возвращает `PendingQuestion`, добавлена `clarifier.apply_answer`. Текст вопроса сохраняется в историю чата |
 | 2026-10-24 | GitHub Actions не запускаются из-за биллинга организации. Добавлен `scripts/ci.sh` — все шаги CI одной командой, его же вызывает workflow. CI теперь только на PR (без повторного прогона после слияния в main), без черновиков и PR с одной документацией, с отменой устаревших прогонов |
 | 2026-10-24 | безопасность данных: порты pgAdmin и БД для разработки только на `127.0.0.1`; pgAdmin в серверном режиме со входом (раньше пускал без пароля), пароль — из `.env`; `.gitignore` и `.dockerignore` закрывают все `.env.*`, ключи и сертификаты; gitleaks в `scripts/ci.sh`; хуки `.githooks` (`pre-commit` — секреты, `pre-push` — запрет push в `main`); раздел «Безопасность» в README и `AGENTS.md` |
+| 2026-10-25 | задача 2а: контракт `TripState.places` (slug → название), оркестратор заполняет его на каждом ходу; обещано ui в ревью PR #7 |

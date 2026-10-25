@@ -5,8 +5,9 @@ from datetime import date, datetime, time, timedelta
 from trip_pilot.domain.offers import Package
 
 LATE_ARRIVAL = time(23, 0)  # приезд в отель с этого времени считается поздним
-NIGHT_END = time(6, 0)  # прилёт с 00:00 до этого времени считается ночным
-AIRPORT_MARGIN = timedelta(hours=3)
+NIGHT_END = time(6, 0)  # время с 00:00 до этого считается ночным (прилёт и выезд в аэропорт)
+AIRPORT_BEFORE_DEPARTURE = timedelta(hours=2)  # в аэропорту быть за 2 ч до вылета
+LONG_WAIT = timedelta(hours=4)  # дольше столько ждать между выездом из номера и дорогой
 
 
 def check_package(package: Package) -> list[str]:
@@ -19,7 +20,7 @@ def check_package(package: Package) -> list[str]:
         *_late_arrival(package),
         *_night_arrival(package),
         *_date_mismatch(package),
-        *_departure_margin(package),
+        *_departure_trip(package),
     ]
 
 
@@ -77,14 +78,22 @@ def _date_mismatch(package: Package) -> list[str]:
     return issues
 
 
-def _departure_margin(package: Package) -> list[str]:
+def _departure_trip(package: Package) -> list[str]:
+    """Когда придётся выезжать в аэропорт: не ночью и без долгого ожидания после выезда."""
     depart = package.inbound.depart_at
+    minutes = package.transfer.duration_min if package.transfer else 0
+    leave = depart - AIRPORT_BEFORE_DEPARTURE - timedelta(minutes=minutes)
+    issues = []
+    if _is_night(leave):
+        issues.append(f"Выезжать из отеля в аэропорт придётся ночью, в {leave:%H:%M}.")
     check_out_at = datetime.combine(
         package.check_out, package.hotel.check_out_time, tzinfo=depart.tzinfo
     )
-    if depart < check_out_at + AIRPORT_MARGIN:
-        return [
-            f"Вылет в {depart:%H:%M} раньше, чем выезд из отеля ({check_out_at:%H:%M}) + 3 ч. "
-            "Уточните время выезда и дорогу до аэропорта."
-        ]
-    return []
+    wait = leave - check_out_at
+    if leave.date() == package.check_out and wait > LONG_WAIT:
+        hours = round(wait.total_seconds() / 3600, 1)
+        issues.append(
+            f"Между выездом из номера ({check_out_at:%H:%M}) и дорогой в аэропорт "
+            f"({leave:%H:%M}) около {hours:g} ч: нужен поздний выезд или камера хранения."
+        )
+    return issues

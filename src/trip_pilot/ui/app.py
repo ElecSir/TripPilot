@@ -4,7 +4,6 @@ import json
 import logging
 import uuid
 from collections.abc import Iterator
-from datetime import datetime
 from html import escape
 from pathlib import Path
 
@@ -16,6 +15,8 @@ from trip_pilot.agent.events import (
     DeltaEvent,
     DoneEvent,
     ErrorEvent,
+    PlanEvent,
+    QuestionEvent,
     StageEvent,
     StepEvent,
     parse_event,
@@ -32,13 +33,20 @@ from trip_pilot.ui.checkout import (
     pay_once,
     prepare_attempt,
 )
+from trip_pilot.ui.plan_view import (
+    TIER_LABELS,
+    assumption_label,
+    flight_text,
+    has_synthetic_offers,
+    hotel_details,
+    plan_assumptions,
+    transfer_text,
+)
 from trip_pilot.ui.theme import theme_css
 
 LOGGER = logging.getLogger(__name__)
 DEMO_PLAN_ENABLED = True  # Отключить после интеграции события plan.
 SAMPLE_PLAN_PATH = Path(__file__).with_name("sample_plan.json")
-TIER_LABELS = {"economy": "Эконом", "comfort": "Комфорт", "premium": "Премиум"}
-ASSUMPTION_LABELS = {"origin": "из Москвы", "nights": "7 ночей"}
 STAGE_LABELS = {
     "intake": "Разбираю запрос",
     "clarify": "Уточняю",
@@ -121,6 +129,7 @@ def run_agent(sid: str, text: str | None = None, action: dict | None = None) -> 
     status = st.status("Агент работает…")
     answer = st.empty()
     reply = ""
+    question_text = ""
     try:
         for event in stream_events(sid, text=text, action=action):
             match event:
@@ -137,29 +146,18 @@ def run_agent(sid: str, text: str | None = None, action: dict | None = None) -> 
                     return None
                 case DoneEvent():
                     break
-                case _:
-                    # PlanEvent обрабатываем без импорта: контракт лида может обновиться.
-                    if getattr(event, "type", None) == "plan":
-                        st.session_state.plan = event.data
+                case QuestionEvent(text=question, options=options):
+                    question_text = question
+                    st.session_state.pending_question = {"text": question, "options": options}
+                case PlanEvent(data=data):
+                    st.session_state.plan = data
+                    st.session_state.pending_question = data.get("pending_question")
     except (httpx.HTTPError, ValueError):
         status.update(label="API недоступен", state="error")
         st.error("Не удалось связаться с API. Повторите попытку позже.")
         return None
     status.update(label="Готово", state="complete")
-    return reply.strip()
-
-
-def flight_text(flight: dict | None) -> str:
-    if not flight:
-        return "Данные о рейсе уточняются"
-    try:
-        departure = datetime.fromisoformat(flight["departure"])
-        arrival = datetime.fromisoformat(flight["arrival"])
-        route = f"{flight.get('from', '—')} → {flight.get('to', '—')}"
-        nonstop = " · прямой" if flight.get("direct") else ""
-        return f"{route} · {departure:%d.%m %H:%M} → {arrival:%d.%m %H:%M}{nonstop}"
-    except (KeyError, TypeError, ValueError):
-        return "Данные о рейсе уточняются"
+    return reply.strip() or question_text
 
 
 def render_points(label: str, values: list, *, warning: bool = False) -> None:
@@ -172,18 +170,13 @@ def render_points(label: str, values: list, *, warning: bool = False) -> None:
 
 
 def render_assumptions(plan: dict) -> None:
-    assumptions = (
-        (plan.get("request") or {}).get("assumptions", [])
-        + ((plan.get("search") or {}).get("assumptions", []))
-    )
+    assumptions = plan_assumptions(plan)
     if not assumptions:
         return
     st.markdown("**Допущения агента**")
     chips = []
     for assumption in assumptions:
-        field = assumption.get("field", "")
-        value = assumption.get("value", "")
-        label = ASSUMPTION_LABELS.get(field, str(value))
+        label = assumption_label(assumption, plan.get("places"))
         chips.append(
             f'<span class="trip-chip">{escape(label)} <span aria-hidden="true">✎</span></span>'
         )
@@ -210,11 +203,12 @@ def select_package(sid: str, package_id: str) -> None:
     st.session_state.plan = load_plan(sid)
 
 
-def render_package(package: dict, sid: str, selected_id: str | None) -> None:
+def render_package(
+    package: dict, sid: str, selected_id: str | None, places: dict[str, str]
+) -> None:
     """Карточка растягивается на ширину своей колонки без пиксельных размеров."""
     package_id = package.get("id", "")
     hotel = package.get("hotel") or {}
-    transfer = package.get("transfer") or {}
     tier = TIER_LABELS.get(package.get("tier"), package.get("tier", "Пакет"))
     st.markdown(
         f'<h3 class="trip-card-marker">{escape(str(tier))}</h3>',
@@ -225,14 +219,13 @@ def render_package(package: dict, sid: str, selected_id: str | None) -> None:
     stars = hotel.get("stars")
     stars_label = f" · {stars}★" if stars else ""
     st.markdown(f"**🏨 {hotel.get('name', 'Отель уточняется')}{stars_label}**")
+    st.caption(hotel_details(hotel))
     st.markdown("**✈️ Туда**")
-    st.write(flight_text(package.get("outbound")))
+    st.write(flight_text(package.get("outbound"), places))
     st.markdown("**✈️ Обратно**")
-    st.write(flight_text(package.get("inbound")))
-    transfer_label = transfer.get("description") or "Информация уточняется"
-    if transfer.get("included") is False:
-        transfer_label += " · не включён"
-    st.markdown(f"**🚐 Трансфер:** {transfer_label}")
+    st.write(flight_text(package.get("inbound"), places))
+    st.markdown("**🚐 Трансфер**")
+    st.write(transfer_text(package.get("transfer")))
     render_points("Почему подходит", package.get("why") or [])
     render_points("Чем жертвуем", package.get("tradeoffs") or [])
     render_points(
@@ -267,22 +260,26 @@ def render_order(order: dict, *, demo: bool) -> None:
     if status == "paid":
         st.success(f"✅ Заказ {order_id} оформлен!")
         st.write(f"Итоговая стоимость: **{money(order.get('total'))}**")
-        if demo or order.get("is_synthetic"):
+        if demo:
             st.info("Это демонстрационное оформление. Деньги не списывались, заказ не настоящий.")
         else:
             st.caption("Статус заказа: оплачен (имитация)")
+    elif status == "cancelled":
+        st.info(f"Заказ {order_id} отменён.")
     else:
         st.info(f"Заказ {order_id} создан. Статус: {status or 'уточняется'}.")
         st.caption("Новая попытка оплаты не отправляется до уточнения статуса заказа.")
 
 
-def render_cart_contents(package: dict, request: dict, *, compact: bool = False) -> None:
+def render_cart_contents(
+    package: dict, request: dict, places: dict[str, str], *, compact: bool = False
+) -> None:
     """В широкой корзине разделяем состав и стоимость; в диалоге собираем вертикально."""
     details = cart_details_html(
         package,
         request,
-        flight_text(package.get("outbound")),
-        flight_text(package.get("inbound")),
+        flight_text(package.get("outbound"), places),
+        flight_text(package.get("inbound"), places),
         compact=compact,
     )
     prices = cart_prices_html(package)
@@ -301,7 +298,9 @@ def render_cart_contents(package: dict, request: dict, *, compact: bool = False)
 
 
 @st.dialog("Оформление поездки")
-def checkout_dialog(sid: str, package: dict, request: dict) -> None:
+def checkout_dialog(
+    sid: str, package: dict, request: dict, places: dict[str, str]
+) -> None:
     """Открывается по кнопке из корзины; повторяет запрос только с прежним UUID."""
     attempt = st.session_state.get("checkout_attempt")
     if not attempt or attempt.get("package_id") != package.get("id"):
@@ -309,7 +308,7 @@ def checkout_dialog(sid: str, package: dict, request: dict) -> None:
         return
 
     st.markdown("**Проверьте состав перед оформлением**")
-    render_cart_contents(package, request, compact=True)
+    render_cart_contents(package, request, places, compact=True)
     if DEMO_PLAN_ENABLED:
         st.caption("🧪 Демонстрация: запрос в API заказов не отправляется.")
     else:
@@ -356,15 +355,14 @@ def render_basket(package: dict, plan: dict, sid: str) -> None:
     tier = TIER_LABELS.get(package.get("tier"), "Выбранный пакет")
     with st.container(border=True):
         st.markdown(cart_header_html(tier), unsafe_allow_html=True)
-        render_cart_contents(package, plan.get("request") or {})
+        render_cart_contents(package, plan.get("request") or {}, plan.get("places") or {})
 
         attempt = st.session_state.get("checkout_attempt") or {}
         order = plan.get("order") or attempt.get("order")
-        if order:
+        if order and not plan.get("order"):
             render_order(order, demo=DEMO_PLAN_ENABLED)
-        else:
-            if breakdown_matches_total(package) is False:
-                st.error("Оформление недоступно, пока не согласована итоговая стоимость.")
+        if not order and breakdown_matches_total(package) is False:
+            st.error("Оформление недоступно, пока не согласована итоговая стоимость.")
 
         # Действия ограничены долями строки; на узких экранах Streamlit складывает колонки.
         pay_col, change_col, _ = st.columns([1.2, 1.5, 2.3], gap="small")
@@ -391,25 +389,29 @@ def render_basket(package: dict, plan: dict, sid: str) -> None:
                     st.rerun()
 
 
-def render_packages(packages: list[dict], sid: str, selected_id: str | None) -> None:
+def render_packages(
+    packages: list[dict], sid: str, selected_id: str | None, places: dict[str, str]
+) -> None:
     """Нативные колонки Streamlit сохраняют равную высоту карточек."""
     for start in range(0, len(packages), 3):
         batch = packages[start : start + 3]
         columns = st.columns(len(batch), gap="medium", border=True)
         for column, package in zip(columns, batch, strict=True):
             with column:
-                render_package(package, sid, selected_id)
+                render_package(package, sid, selected_id, places)
 
 
 def render_plan(plan: dict, sid: str) -> None:
     st.divider()
     st.header("Ваша поездка")
-    if DEMO_PLAN_ENABLED or plan.get("is_synthetic") or plan.get("source") == "synthetic":
+    if DEMO_PLAN_ENABLED or has_synthetic_offers(plan):
         st.caption("🧪 Демо-данные: цены, расписания и наличие синтетические")
     if not plan:
         st.info("Когда агент подберёт варианты, они появятся здесь.")
         return
     render_assumptions(plan)
+    if plan.get("order"):
+        render_order(plan["order"], demo=DEMO_PLAN_ENABLED)
     packages = plan.get("packages") or []
     if not packages:
         st.info("Пакеты пока не сформированы.")
@@ -425,13 +427,45 @@ def render_plan(plan: dict, sid: str) -> None:
         if st.session_state.get("compare_packages", False) and not plan.get("order"):
             st.divider()
             st.subheader("Другие варианты поездки")
-            render_packages(packages, sid, selected_id)
+            render_packages(packages, sid, selected_id, plan.get("places") or {})
         if st.session_state.get("checkout_dialog_open", False):
-            checkout_dialog(sid, chosen, plan.get("request") or {})
+            checkout_dialog(sid, chosen, plan.get("request") or {}, plan.get("places") or {})
             # Закрытие через X/ESC не вызывает rerun: избегаем повторного открытия.
             st.session_state.checkout_dialog_open = False
     else:
-        render_packages(packages, sid, selected_id)
+        render_packages(packages, sid, selected_id, plan.get("places") or {})
+
+
+def queue_answer() -> None:
+    """Передаёт ровно текст выбранной кнопки; свободный ввод остаётся доступен."""
+    choice = st.session_state.get("question_choice")
+    if choice:
+        st.session_state.queued_answer = choice
+        st.session_state.question_choice = None
+
+
+def render_question() -> None:
+    """При загрузке вопрос берётся из TripState, во время потока — из question."""
+    question = st.session_state.get("pending_question")
+    if not question:
+        return
+    text = question.get("text", "")
+    messages = st.session_state.get("messages") or []
+    if (
+        not messages
+        or messages[-1].get("role") != "assistant"
+        or messages[-1].get("content") != text
+    ):
+        st.markdown(text)
+    options = question.get("options") or []
+    if options:
+        st.pills(
+            "Выберите ответ или напишите свой",
+            options,
+            key="question_choice",
+            selection_mode="single",
+            on_change=queue_answer,
+        )
 
 
 sid = session_id()
@@ -439,6 +473,8 @@ if st.session_state.get("active_sid") != sid:
     st.session_state.active_sid = sid
     st.session_state.messages = load_history(sid)
     st.session_state.plan = load_plan(sid)
+    st.session_state.pending_question = st.session_state.plan.get("pending_question")
+    st.session_state.queued_answer = None
     st.session_state.demo_selected_package_id = None
     st.session_state.checkout_attempt = None
     st.session_state.checkout_dialog_open = False
@@ -461,7 +497,9 @@ with st.container():
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
+    render_question()
     prompt = st.chat_input("Например: к тёплому морю в ноябре, недорого, с ребёнком")
+    prompt = st.session_state.pop("queued_answer", None) or prompt
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
         with history_box:
@@ -471,5 +509,7 @@ with st.container():
                 reply = run_agent(sid, text=prompt)
         if reply:
             st.session_state.messages.append({"role": "assistant", "content": reply})
+        if reply is not None:
+            st.rerun()
 
 render_plan(st.session_state.plan, sid)

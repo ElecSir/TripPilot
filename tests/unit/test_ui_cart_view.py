@@ -21,14 +21,15 @@ def test_cart_details_group_trip_components_and_escape_content() -> None:
     package = {
         "hotel": {"name": "Тест & <отель>", "stars": 5},
         "check_in": "2026-11-14", "check_out": "2026-11-21", "nights": 7,
-        "transfer": {"description": "VIP <transfer>", "included": False},
+        "transfer": {"kind": "taxi", "duration_min": 35, "capacity": 4,
+                     "price": "1800", "pets_allowed": True},
     }
     request = {"party": {"adults": 2, "children_ages": [5], "pets": ["dog"]}}
     html = cart_details_html(package, request, "Рейс <1>", "Рейс <2>")
     assert "14.11.2026 — 21.11.2026" in html
     assert "2" in html and "Детей: 1" in html and "Животных: 1" in html
     assert "Тест &amp; &lt;отель&gt;" in html
-    assert "VIP &lt;transfer&gt; · не включён" in html
+    assert "Такси · 35 мин · мест: 4 · 1 800 ₽ за машину в одну сторону" in html
     assert "Рейс &lt;1&gt;" in html
     assert "Рейс &lt;2&gt;" in html
     assert "<отель>" not in html
@@ -38,7 +39,7 @@ def test_cart_details_group_trip_components_and_escape_content() -> None:
 
 
 def test_compact_checkout_shows_hotels_and_costs_without_flights() -> None:
-    package = {"hotel": {"name": "Отель"}, "transfer": {"description": "Трансфер"}}
+    package = {"hotel": {"name": "Отель"}, "transfer": None}
     html = cart_details_html(package, {}, "туда", "обратно", compact=True)
     assert "Отель" in html
     assert "Трансфер" in html
@@ -48,7 +49,7 @@ def test_compact_checkout_shows_hotels_and_costs_without_flights() -> None:
 
 def test_price_markup_contains_breakdown_and_full_total() -> None:
     package = {
-        "price_breakdown": {"flight": "72000", "hotel": "87500", "transfer": "10000"},
+        "price_breakdown": {"flights": "72000", "hotel": "87500", "transfer": "10000"},
         "total": "169500.00",
     }
     html = cart_prices_html(package)

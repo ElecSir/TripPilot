@@ -4,6 +4,7 @@ from datetime import date
 from html import escape
 
 from trip_pilot.ui.checkout import breakdown_rows, money
+from trip_pilot.ui.plan_view import hotel_details, transfer_text
 
 
 def _html(value: object) -> str:
@@ -55,15 +56,15 @@ def cart_details_html(package: dict, request: dict, outbound: str, inbound: str,
                       compact: bool = False) -> str:
     """Состав поездки; текст рейсов передаётся из UI и экранируется."""
     hotel = package.get("hotel") or {}
-    transfer = package.get("transfer") or {}
     stars = hotel.get("stars")
     hotel_name = _html(hotel.get("name") or "Отель уточняется")
     if stars is not None:
         hotel_name += f' <span class="trip-hotel-stars">· {_html(stars)}★</span>'
-    transfer_label = transfer.get("description") or "Трансфер уточняется"
-    if transfer.get("included") is False:
-        transfer_label += " · не включён"
+    transfer_label = transfer_text(package.get("transfer"))
     meta = f"{travel_dates(package)} · {package.get('nights', '—')} ночей"
+    conditions = hotel_details(hotel)
+    if conditions:
+        meta += f" · {conditions}"
     parts = [
         '<div class="trip-basket-section-label">Состав поездки</div>',
         '<div class="trip-detail-stack">',

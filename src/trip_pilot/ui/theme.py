@@ -393,6 +393,19 @@ div[role="dialog"] {
 .stApp [data-testid="stChatInputContainer"] {
     background: var(--trip-bg) !important;
 }
+@media (max-width: 760px) {
+    .stApp [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .trip-card-marker),
+    .stApp [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .trip-prices-panel) {
+        flex-wrap: wrap !important;
+    }
+    .stApp [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .trip-card-marker)
+      > [data-testid="stColumn"],
+    .stApp [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .trip-prices-panel)
+      > [data-testid="stColumn"] {
+        flex: 1 1 100% !important;
+        width: 100% !important;
+    }
+}
 @media (max-width: 640px) {
     .stMainBlockContainer { padding-left: 1rem; padding-right: 1rem; }
     .stApp .trip-basket-marker { align-items: flex-start; }

@@ -61,11 +61,13 @@ SearchWindow:    check_in, check_out, nights, assumptions     # даты, по �
             "assumptions": [{"field": "nights", "value": "7", "reason": "длительность не указана — неделя"},
                             {"field": "date_from", "value": "2026-11-07", "reason": "ноябрь → заезд в ближайшую субботу, 7 ноября"}]},
  "packages": [{"id": "p1", "tier": "economy", "total": "84800", "hotel": {"name": "…", "stars": 3}, "why": ["…"], "tradeoffs": ["…"], "risks": ["…"], "...": "..."}],
+ "places": {"antalya": "Анталья", "moscow": "Москва"},
  "pending_question": null, "selected_package_id": null, "order": null}
 ```
 
 - **`request`** — то, что сказал пользователь («в ноябре»). **`search`** — во что это превратилось при поиске («7–14 ноября») и что агент при этом додумал. Чипы допущений = `request.assumptions` + `search.assumptions`.
 - **`pending_question`** = `{"slot", "text", "options"}`, пока агент ждёт ответа. По нему кнопки восстанавливаются после F5.
+- **`places`** — названия всех мест плана: slug → «Москва». В запросе (`origin`, `destination`) и в рейсах (`outbound` / `inbound`: `origin`, `destination`) места приходят как slug, а человеку показывай `places[slug]`, например «Москва → Анталья» и «из Москвы ✎». Если slug вдруг нет в `places`, выводи сам slug. В `sample_plan.json` это поле тоже нужно.
 
 **API** (делает лид, всё уже в `main`):
 - `POST /api/chat` с `{"session_id", "text"}` → SSE. Ответ на вопрос агента — обычный `text`, **ровно текст кнопки**.
@@ -195,3 +197,4 @@ def explain(package: Package, request: TripRequest) -> Package: ...   # запо
 |---|---|
 | 2026-10-23 | первая версия |
 | 2026-10-24 | контракт под оркестратор MVP: у `PendingQuestion` появился `slot`; `next_question` возвращает `PendingQuestion` (а не `QuestionEvent`); новая функция `apply_answer`; в `TripState` появилось `search` (даты поиска и их допущения); `children_ages` допускает `None`; `/api/trips` и `/api/orders` работают по-настоящему; точные сигнатуры — `agent/toolkit.py` |
+| 2026-10-25 | в `TripState` появилось `places` (slug → название места): города в карточках, рейсах и чипах берутся оттуда, а не выводятся slug'ом. Обещано в ревью PR #7 |

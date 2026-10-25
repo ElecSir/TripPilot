@@ -12,6 +12,15 @@ step() {
     printf '\n== %s ==\n' "$1"
 }
 
+GITLEAKS_IMAGE=zricethezav/gitleaks:v8.28.0
+# В Git Bash на Windows Docker нужен путь вида C:/..., на Linux и macOS — обычный.
+src=$(pwd -W 2>/dev/null || pwd)
+
+step "Секреты: gitleaks по истории git"
+# Только то, что попало в git: локальный .env с настоящим ключом в git не уходит и не мешает.
+MSYS_NO_PATHCONV=1 docker run --rm -v "$src:/repo:ro" "$GITLEAKS_IMAGE" \
+    git /repo --no-banner --redact --exit-code 1
+
 step "Образ для тестов и линтера"
 docker build -f docker/app.Dockerfile --target dev -t trip-pilot-dev .
 

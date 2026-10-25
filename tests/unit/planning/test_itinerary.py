@@ -54,14 +54,14 @@ def _msk(day: int, hour: int, minute: int = 0) -> datetime:
 
 
 def test_clean_package_has_no_issues():
-    package = _package(_msk(10, 15), _msk(15, 20), date(2026, 11, 10), date(2026, 11, 15))
+    package = _package(_msk(10, 15), _msk(15, 16), date(2026, 11, 10), date(2026, 11, 15))
     assert check_package(package) == []
 
 
 def test_late_arrival_with_transfer():
     # прилёт 22:30 + трансфер 45 мин → 23:15
     package = _package(
-        _msk(10, 22, 30), _msk(15, 20), date(2026, 11, 10), date(2026, 11, 15), transfer_min=45
+        _msk(10, 22, 30), _msk(15, 16), date(2026, 11, 10), date(2026, 11, 15), transfer_min=45
     )
     issues = check_package(package)
     assert len(issues) == 1
@@ -70,26 +70,26 @@ def test_late_arrival_with_transfer():
 
 def test_arrival_before_23_with_transfer_is_fine():
     package = _package(
-        _msk(10, 22, 0), _msk(15, 20), date(2026, 11, 10), date(2026, 11, 15), transfer_min=30
+        _msk(10, 22, 0), _msk(15, 16), date(2026, 11, 10), date(2026, 11, 15), transfer_min=30
     )
     assert check_package(package) == []
 
 
 def test_night_arrival_needs_extra_night():
     # прилёт 02:00 10-го, отель с 10-го: номера до 14:00 не будет
-    package = _package(_msk(10, 2), _msk(15, 20), date(2026, 11, 10), date(2026, 11, 15))
+    package = _package(_msk(10, 2), _msk(15, 16), date(2026, 11, 10), date(2026, 11, 15))
     issues = check_package(package)
     assert len(issues) == 1
     assert "ночью" in issues[0]
 
 
 def test_night_arrival_with_previous_night_booked_is_fine():
-    package = _package(_msk(10, 2), _msk(15, 20), date(2026, 11, 9), date(2026, 11, 15))
+    package = _package(_msk(10, 2), _msk(15, 16), date(2026, 11, 9), date(2026, 11, 15))
     assert check_package(package) == []
 
 
 def test_check_in_date_mismatch():
-    package = _package(_msk(10, 15), _msk(15, 20), date(2026, 11, 11), date(2026, 11, 15))
+    package = _package(_msk(10, 15), _msk(15, 16), date(2026, 11, 11), date(2026, 11, 15))
     issues = check_package(package)
     assert len(issues) == 1
     assert "не совпадает" in issues[0]
@@ -97,7 +97,7 @@ def test_check_in_date_mismatch():
 
 
 def test_check_out_date_mismatch():
-    package = _package(_msk(10, 15), _msk(16, 20), date(2026, 11, 10), date(2026, 11, 15))
+    package = _package(_msk(10, 15), _msk(16, 16), date(2026, 11, 10), date(2026, 11, 15))
     issues = check_package(package)
     assert len(issues) == 1
     assert "не совпадает" in issues[0]
@@ -107,20 +107,45 @@ def test_check_out_date_mismatch():
 def test_dates_are_compared_in_local_timezone():
     # 01:30 11-го по Бангкоку — это ещё 10-е по UTC; сравнивать нужно по местному времени
     arrive = datetime(2026, 11, 11, 1, 30, tzinfo=BKK)
-    package = _package(arrive, _msk(16, 20), date(2026, 11, 11), date(2026, 11, 16))
+    package = _package(arrive, _msk(16, 16), date(2026, 11, 11), date(2026, 11, 16))
     issues = check_package(package)
     assert len(issues) == 1
     assert "ночью" in issues[0]  # только ночной прилёт, без «не совпадает»
 
 
-def test_departure_less_than_three_hours_after_check_out():
-    # выезд в 12:00, вылет в 14:59 < 15:00
-    package = _package(_msk(10, 15), _msk(15, 14, 59), date(2026, 11, 10), date(2026, 11, 15))
+def test_night_departure_to_airport():
+    # вылет 04:00, трансфер 30 мин: выезжать нужно в 01:30
+    package = _package(_msk(10, 15), _msk(15, 4), date(2026, 11, 10), date(2026, 11, 15))
     issues = check_package(package)
     assert len(issues) == 1
-    assert "+ 3 ч" in issues[0]
+    assert "ночью" in issues[0]
+    assert "01:30" in issues[0]
 
 
-def test_departure_exactly_three_hours_after_check_out_is_fine():
-    package = _package(_msk(10, 15), _msk(15, 15), date(2026, 11, 10), date(2026, 11, 15))
+def test_departure_at_six_in_the_morning_is_not_night():
+    # вылет 08:30, трансфер 30 мин: выезд ровно в 06:00
+    package = _package(_msk(10, 15), _msk(15, 8, 30), date(2026, 11, 10), date(2026, 11, 15))
+    assert check_package(package) == []
+
+
+def test_long_wait_after_check_out():
+    # выезд из номера в 12:00, в аэропорт выезжать в 17:30: ждать 5,5 ч
+    package = _package(_msk(10, 15), _msk(15, 20), date(2026, 11, 10), date(2026, 11, 15))
+    issues = check_package(package)
+    assert len(issues) == 1
+    assert "камера хранения" in issues[0]
+    assert "5.5" in issues[0]
+
+
+def test_wait_of_exactly_four_hours_is_fine():
+    # в аэропорт выезжать в 16:00: ровно 4 ч после выезда из номера
+    package = _package(_msk(10, 15), _msk(15, 18, 30), date(2026, 11, 10), date(2026, 11, 15))
+    assert check_package(package) == []
+
+
+def test_departure_without_transfer_uses_only_airport_margin():
+    # без трансфера выезд в 14:00 при вылете в 16:00
+    package = _package(
+        _msk(10, 15), _msk(15, 16), date(2026, 11, 10), date(2026, 11, 15), transfer_min=None
+    )
     assert check_package(package) == []

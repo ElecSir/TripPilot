@@ -1,3 +1,5 @@
+"""Справочник направлений: загрузка из data/reference/destinations.json."""
+
 import json
 import logging
 from pathlib import Path
@@ -11,9 +13,18 @@ log = logging.getLogger(__name__)
 
 
 async def seed_reference(session: AsyncSession, reference_dir: Path) -> None:
-    """Справочник направлений. Существующие slug не трогаем: повторный запуск безопасен."""
+    """Новые направления добавляются; у существующих обновляются теги и тёплые месяцы.
+
+    Остальные поля существующих slug не трогаем. Повторный запуск безопасен.
+    """
     rows = json.loads((reference_dir / "destinations.json").read_text(encoding="utf-8"))
-    result = await session.execute(
-        insert(Destination).values(rows).on_conflict_do_nothing(index_elements=["slug"])
+    statement = insert(Destination).values(rows)
+    statement = statement.on_conflict_do_update(
+        index_elements=["slug"],
+        set_={
+            "tags": statement.excluded.tags,
+            "warm_months": statement.excluded.warm_months,
+        },
     )
-    log.info("Направления: добавлено %d из %d", result.rowcount, len(rows))
+    await session.execute(statement)
+    log.info("Направления: обработано %d", len(rows))

@@ -16,6 +16,7 @@ from trip_pilot.config import get_settings
 from trip_pilot.logs import setup_logging
 from trip_pilot.rag.index import build_index
 from trip_pilot.seed.reference import seed_reference
+from trip_pilot.seed.synthetic import seed_inventory
 
 log = logging.getLogger("trip_pilot.cli")
 
@@ -32,6 +33,7 @@ async def seed() -> None:
     try:
         async with create_session_factory(engine)() as session:
             await seed_reference(session, settings.data_dir / "reference")
+            await seed_inventory(session)
             await build_index(session, settings.data_dir / "knowledge")
             await session.commit()
     finally:

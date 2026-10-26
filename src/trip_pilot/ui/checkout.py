@@ -7,6 +7,8 @@ from typing import Any
 import httpx
 
 BREAKDOWN_LABELS = {
+    "outbound": "Перелёт туда",
+    "inbound": "Перелёт обратно",
     "flight": "Перелёты",
     "flights": "Перелёты",
     "hotel": "Проживание",

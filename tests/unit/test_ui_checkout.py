@@ -6,6 +6,7 @@ from uuid import UUID
 import httpx
 import pytest
 
+from tests.fakes import sample_package
 from trip_pilot.ui.checkout import (
     breakdown_matches_total,
     breakdown_rows,
@@ -35,6 +36,17 @@ def test_breakdown_is_exact_decimal(package: dict) -> None:
     assert breakdown_matches_total(package) is True
     assert money("1234.56") == "1 234,56 ₽"
     assert money("137900.00") == "137 900 ₽"
+
+
+def test_every_breakdown_key_of_real_packages_has_russian_label() -> None:
+    package = sample_package().model_dump(mode="json")
+    assert [label for label, _ in breakdown_rows(package)] == [
+        "Перелёт туда",
+        "Перелёт обратно",
+        "Проживание",
+        "Трансфер",
+    ]
+    assert breakdown_matches_total(package) is True
 
 
 def test_missing_or_invalid_breakdown_never_claims_match(package: dict) -> None:

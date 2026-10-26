@@ -19,6 +19,7 @@ FROM build AS dev
 RUN uv sync --frozen
 COPY tests ./tests
 COPY migrations ./migrations
+COPY data ./data
 CMD ["pytest"]
 
 FROM ${PYTHON_IMAGE} AS runtime

@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from trip_pilot.domain.knowledge import KnowledgeHit
 from trip_pilot.domain.offers import Destination, Hotel, Leg, Package, Transfer
-from trip_pilot.domain.request import Party
+from trip_pilot.domain.request import Party, TripRequest
 from trip_pilot.domain.trip_state import Order, TripState
 
 ChatMessages = list[dict[str, str]]  # [{"role": "user", "content": "..."}]
@@ -57,6 +57,13 @@ class KnowledgeBase(Protocol):
         doc_type: str | None = None,
         limit: int = 5,
     ) -> list[KnowledgeHit]: ...
+
+    async def context(
+        self, request: TripRequest, destination: str, *, limit: int = 4
+    ) -> list[KnowledgeHit]:
+        """Разделы под запрос для объяснений: «Почему ехать», «Минусы и риски» — всегда;
+        «С детьми», «С животными», «Когда лучше» — если они важны для этого запроса."""
+        ...
 
 
 @runtime_checkable

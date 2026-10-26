@@ -9,6 +9,8 @@ from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
+from trip_pilot.domain.knowledge import KnowledgeHit
+
 Meal = Literal["RO", "BB", "HB", "AI"]  # без питания, завтрак, полупансион, всё включено
 Tier = Literal["economy", "balance", "comfort"]
 
@@ -100,6 +102,7 @@ class Package(BaseModel):
     why: list[str] = []
     tradeoffs: list[str] = []
     risks: list[str] = []
+    sources: list[KnowledgeHit] = []  # фрагменты базы знаний, на которые ссылаются [S1], [S2]…
 
     @model_validator(mode="after")
     def consistent(self) -> Self:

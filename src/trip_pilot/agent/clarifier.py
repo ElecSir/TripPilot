@@ -14,6 +14,7 @@ from trip_pilot.agent.intent import (
     parse_request,
     parse_when,
     resolve_city,
+    resolve_place,
 )
 from trip_pilot.domain.errors import DomainError, NoResults
 from trip_pilot.domain.offers import Destination
@@ -68,7 +69,7 @@ def apply_answer(
     """Не похожее на ответ сообщение отдаём разборщику нового запроса целиком."""
     low = normalize(text).strip(" .!?")
     if question.slot in ("origin", "destination"):
-        raw = re.sub(r"^(?:из|в|во)\s+", "", low)
+        raw = re.sub(r"^(?:из|в|во|на)\s+", "", low)
         if (
             month_number(raw) is not None
             or len(raw.split()) > 3
@@ -80,7 +81,8 @@ def apply_answer(
             )
         ):
             return None
-        city = resolve_city(raw, catalog)
+        resolve = resolve_city if question.slot == "origin" else resolve_place
+        city = resolve(raw, catalog)
         if isinstance(city, Failure):
             return city
         return _with_answer(request, {question.slot: city.unwrap()})

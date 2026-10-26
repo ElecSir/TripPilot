@@ -79,12 +79,39 @@ _ALIASES = {
     ),
     "kazan": ("казань", "казани"),
     "antalya": ("анталья", "анталью", "антальи", "анталия", "анталию"),
+    "anapa": ("анапа", "анапу", "анапы", "анапе"),
+    "kaliningrad": ("калининград", "калининграда", "калининграде"),
+    "murmansk": ("мурманск", "мурманска", "мурманске"),
+    "dubai": ("дубай", "дубая", "дубае"),
+    "sharm": (
+        "шарм",
+        "шарма",
+        "шарме",
+        "шарм-эль-шейх",
+        "шарм-эль-шейха",
+        "шарм эль шейх",
+        "шарм эль шейха",
+    ),
+    "phuket": ("пхукет", "пхукета", "пхукете"),
+    "nha-trang": ("нячанг", "нячанга", "нячанге", "нья-чанг", "нья чанг"),
 }
+# Страны: ключ — название из каталога в нижнем регистре, значения — падежные формы.
+_COUNTRY_FORMS = {
+    "россия": ("россию", "россии", "рф"),
+    "турция": ("турцию", "турции"),
+    "оаэ": ("эмираты", "эмиратах", "эмиратов", "арабские эмираты"),
+    "египет": ("египта", "египте"),
+    "таиланд": ("таиланда", "таиланде", "тайланд", "тайланда", "тай"),
+    "вьетнам": ("вьетнама", "вьетнаме"),
+}
+_COUNTRY_FUZZY = 80  # опечатки в названии страны («турцмю»)
+_CLOSE_MISS = 65  # слово после «в» настолько похоже на город, что это опечатка, а не «в начале»
 _CITY_NOISE = {
     "море",
     "морю",
     "город",
     "горы",
+    "майские",
     "теплое",
     "теплому",
     "теплые",
@@ -141,15 +168,20 @@ def month_number(word: str) -> int | None:
     return _MONTH_NUMBERS.get(normalize(word))
 
 
-def resolve_city(raw: str, catalog: list[Destination]) -> Result[str, DomainError]:
-    """Алиасы действуют только для городов из переданного каталога."""
-    value = normalize(raw).strip(" .,!?")
+def _scores(value: str, catalog: list[Destination]) -> dict[str, float]:
     scores = {}
     for city in catalog:
         aliases = [city.name, city.slug, *_ALIASES.get(city.slug, ())]
         if city.iata:
             aliases.append(city.iata)
         scores[city.slug] = max(ratio(value, normalize(alias)) for alias in aliases)
+    return scores
+
+
+def resolve_city(raw: str, catalog: list[Destination]) -> Result[str, DomainError]:
+    """Алиасы действуют только для городов из переданного каталога."""
+    value = normalize(raw).strip(" .,!?")
+    scores = _scores(value, catalog)
     if not scores or max(scores.values()) < 80:
         return Failure(UnknownCity(raw))
     best = max(scores.values())
@@ -159,10 +191,61 @@ def resolve_city(raw: str, catalog: list[Destination]) -> Result[str, DomainErro
     return Success(candidates[0])
 
 
-def _cities(text: str, catalog: list[Destination]) -> Result[dict, DomainError]:
+def _country_slugs(value: str, catalog: list[Destination]) -> tuple[str, ...]:
+    """Направления страны из каталога, если значение — название страны в любом падеже."""
+    for country in dict.fromkeys(normalize(city.country) for city in catalog):
+        forms = (country, *_COUNTRY_FORMS.get(country, ()))
+        if any(
+            value == form or (len(value) >= 5 and ratio(value, form) >= _COUNTRY_FUZZY)
+            for form in forms
+        ):
+            return tuple(city.slug for city in catalog if normalize(city.country) == country)
+    return ()
+
+
+def resolve_place(raw: str, catalog: list[Destination]) -> Result[str, DomainError]:
+    """Куда: страна даёт её направления из каталога (одно — slug, несколько — AmbiguousCity)."""
+    value = normalize(raw).strip(" .,!?")
+    slugs = _country_slugs(value, catalog)
+    if len(slugs) == 1:
+        return Success(slugs[0])
+    if slugs:
+        return Failure(AmbiguousCity(raw, slugs))
+    return resolve_city(raw, catalog)
+
+
+def _capitalized(text: str) -> set[str]:
+    """Слова, написанные с заглавной: «в Урюпинск» — название места, а не «в начале»."""
+    return {normalize(word) for word in re.findall(r"[А-ЯЁA-Z][а-яёa-z-]*", text)}
+
+
+def _resolve_phrase(
+    words: list[str], catalog: list[Destination], *, origin: bool, capitalized: set[str]
+) -> Result[str, DomainError] | None:
+    """Success или Failure по названию. None: слова не похожи на город, их пропускаем."""
+    resolve = resolve_city if origin else resolve_place
+    result = None
+    for length in range(len(words), 0, -1):
+        result = resolve(" ".join(words[:length]), catalog)
+        if isinstance(result, Success) or isinstance(result.failure(), AmbiguousCity):
+            return result
+    if origin:  # «из …» без города — ошибка, пропускать нельзя
+        return result
+    close = any(
+        max(_scores(" ".join(words[:length]), catalog).values(), default=0) >= _CLOSE_MISS
+        for length in range(1, len(words) + 1)
+    )
+    if close or words[0] in capitalized:
+        return Failure(UnknownCity(words[0]))
+    return None
+
+
+def _cities(
+    text: str, catalog: list[Destination], capitalized: set[str] | None = None
+) -> Result[dict, DomainError]:
     patch = {}
     # Lookahead позволяет увидеть и «из Москвы», и следующее «в Сочи».
-    pattern = r"(?=\b(из|в|во)\s+([а-яa-z][а-яa-z-]*(?:\s+[а-яa-z][а-яa-z-]*){0,2}))"
+    pattern = r"(?=\b(из|в|во|на)\s+([а-яa-z][а-яa-z-]*(?:\s+[а-яa-z][а-яa-z-]*){0,2}))"
     for match in re.finditer(pattern, text):
         marker, phrase = match.groups()
         words = phrase.split()
@@ -174,11 +257,11 @@ def _cities(text: str, catalog: list[Destination]) -> Result[dict, DomainError]:
                 break
         if not words:
             continue
-        result = resolve_city(" ".join(words), catalog)
-        for length in range(len(words) - 1, 0, -1):
-            if isinstance(result, Success):
-                break
-            result = resolve_city(" ".join(words[:length]), catalog)
+        result = _resolve_phrase(
+            words, catalog, origin=marker == "из", capitalized=capitalized or set()
+        )
+        if result is None:
+            continue
         if isinstance(result, Failure):
             return result
         patch["origin" if marker == "из" else "destination"] = result.unwrap()
@@ -355,7 +438,7 @@ def parse_request(
     """Новое сообщение дополняет базу; месяцу не назначаются даты поиска."""
     current = base or TripRequest()
     low = normalize(text)
-    cities = _cities(low, catalog)
+    cities = _cities(low, catalog, _capitalized(text))
     if isinstance(cities, Failure):
         return cities
     patch = cities.unwrap()

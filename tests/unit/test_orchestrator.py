@@ -101,7 +101,8 @@ def simple_packages(request, outbound, inbound, hotels, transfers_by_hotel):
                            sorted(hotels, key=lambda h: h.price_per_night), strict=False):
         transfer = (transfers_by_hotel.get(hotel.id) or [None])[0]
         breakdown = {
-            "flights": (out.price + back.price) * request.party.travellers,
+            "outbound": out.price * request.party.travellers,
+            "inbound": back.price * request.party.travellers,
             "hotel": hotel.price_per_night * request.nights,
             "transfer": transfer.price * 2 if transfer else Decimal(0),
         }

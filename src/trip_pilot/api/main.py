@@ -23,7 +23,7 @@ from trip_pilot.planning import inspiration, itinerary, packages
 from trip_pilot.ports import TripStateRepository
 from trip_pilot.services import explanation
 
-# Функции зон ui и data, которые вызывает оркестратор. Сигнатуры — в agent/toolkit.py.
+# Функции зоны data, которые вызывает оркестратор. Сигнатуры — в agent/toolkit.py.
 TOOLKIT = Toolkit(
     parse_request=intent.parse_request,
     parse_change=intent.parse_change,

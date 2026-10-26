@@ -27,7 +27,7 @@ dev-image:
 test: dev-image
 	docker run --rm $(DEV_IMAGE) pytest
 
-test-integration:  ## тесты на настоящем Postgres (поднимет db и прогонит миграции)
+test-integration:  ## тесты на Postgres и e2e через шлюз (поднимет стек, если он не запущен)
 	docker compose --profile tests run --rm --build tests
 
 lint: dev-image

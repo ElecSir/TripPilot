@@ -57,7 +57,7 @@ if [ "$heads" -ne 1 ]; then
 fi
 docker compose run --rm -T bootstrap alembic check
 
-step "Интеграционные тесты на Postgres"
+step "Интеграционные тесты на Postgres и e2e через шлюз"
 docker compose --profile tests run --rm -T --build tests
 
 printf '\n== Все шаги CI прошли ==\n'

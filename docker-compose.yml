@@ -99,7 +99,7 @@ services:
       db:
         condition: service_healthy
 
-  tests:                         # интеграционные тесты на настоящем Postgres: docker compose --profile tests run --rm tests
+  tests:                         # интеграционные и e2e-тесты на поднятом стеке: docker compose --profile tests run --rm tests
     <<: *app
     build:
       context: .
@@ -110,9 +110,12 @@ services:
     environment:
       DATABASE_URL: *db_url
       INTEGRATION: "1"
+      E2E_BASE_URL: http://gateway:8080   # e2e ходит через шлюз, как браузер жюри
     depends_on:
       bootstrap:
         condition: service_completed_successfully
+      gateway:
+        condition: service_healthy
 
 volumes:
   pgdata:

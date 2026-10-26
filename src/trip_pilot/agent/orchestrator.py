@@ -1,18 +1,22 @@
 """Оркестратор агента.
 
-MvpOrchestrator — линейный сценарий MVP без LLM: каждое сообщение обновляет запрос
-и досчитывает то, чего не хватает. Ход: загрузить план → обработать → сохранить → done.
-Собирается с настоящими адаптерами и функциями зон в api/main.py.
+MvpOrchestrator — линейный сценарий: каждое сообщение обновляет запрос и досчитывает то,
+чего не хватает. Ход: загрузить план → обработать → сохранить → done. Собирается
+с настоящими адаптерами и функциями зон в api/main.py.
+
+Этап 1: если LLM доступна, сообщение сначала понимает `understand`, а объяснения дописывает
+`narrate`. Любой сбой LLM (`LLMUnavailable`) — тот же ход на правилах и шаблонах, как в MVP.
 """
 
 import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from pydantic import BaseModel
 from returns.result import Failure, Result, Success
 
 from trip_pilot.agent import texts
@@ -29,18 +33,38 @@ from trip_pilot.agent.events import (
 )
 from trip_pilot.agent.toolkit import Toolkit
 from trip_pilot.domain.errors import DomainError, NoResults
-from trip_pilot.domain.offers import Destination
+from trip_pilot.domain.knowledge import KnowledgeHit
+from trip_pilot.domain.offers import Destination, Package
 from trip_pilot.domain.request import TripRequest
 from trip_pilot.domain.trip_state import PendingQuestion, TripState
 from trip_pilot.ports import (
+    LLM,
+    ChatMessages,
     DestinationCatalog,
     HotelSource,
+    KnowledgeBase,
+    LLMUnavailable,
     TransferSource,
     TransportSource,
     TripStateRepository,
 )
 
 log = logging.getLogger(__name__)
+
+
+class NoLLM:
+    """LLM не подключена: ведёт себя как адаптер без ключа — каждый вызов бросает LLMUnavailable."""
+
+    enabled = False
+
+    async def complete(self, messages: ChatMessages) -> str:
+        raise LLMUnavailable("LLM не подключена")
+
+    async def structured[T: BaseModel](self, messages: ChatMessages, schema: type[T]) -> T:
+        raise LLMUnavailable("LLM не подключена")
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        raise LLMUnavailable("LLM не подключена")
 
 
 def places_of(state: TripState, names: dict[str, str]) -> dict[str, str]:
@@ -65,6 +89,9 @@ class AgentDeps:
     transfers: TransferSource
     trips: TripStateRepository
     toolkit: Toolkit
+    # Этап 1. Без них — режим MVP: правила, шаблоны, объяснения без базы знаний.
+    llm: LLM = field(default_factory=NoLLM)
+    knowledge: KnowledgeBase | None = None
 
 
 class MvpOrchestrator:
@@ -85,8 +112,14 @@ class MvpOrchestrator:
                 yield event
             return
 
-        # 1. Обновить запрос: ответ на вопрос → изменение плана → новое сообщение.
-        match self._update_request(state, text, catalog, today):
+        # 1. Обновить запрос. С LLM — понимание моделью; без неё или при сбое — правила:
+        #    ответ на вопрос → изменение плана → новое сообщение.
+        if self._uses_llm(self._tk.understand):
+            yield StepEvent(text="Разбираю запрос с помощью ИИ")
+        updated = await self._understand(state, text, catalog, today)
+        if updated is None:
+            updated = self._update_request(state, text, catalog, today)
+        match updated:
             case Failure(error):
                 reply = texts.error_text(error, names)
                 for event in await self._close(state, reply, question=state.pending_question):
@@ -140,7 +173,7 @@ class MvpOrchestrator:
             if failed:
                 yield StepEvent(text=texts.source_failed("трансферы"))
 
-        # 4. Пакеты: сборка и проверки — у data, объяснения — у ui.
+        # 4. Пакеты: сборка, проверки и объяснения — функции data.
         yield StepEvent(text="Собираю пакеты и проверяю стыковки")
         search_request = request.model_copy(
             update={"date_from": window.check_in, "nights": window.nights}
@@ -165,6 +198,9 @@ class MvpOrchestrator:
             )
             for p in packages
         ]
+        if self._uses_llm(self._tk.narrate):
+            yield StepEvent(text="Объясняю варианты с помощью ИИ")
+        packages = await self._narrate(packages, search_request)
         state = state.model_copy(update={"packages": packages})
         yield StageEvent(stage="compare")
         summary = texts.plan_summary(
@@ -198,6 +234,44 @@ class MvpOrchestrator:
     async def _load(self, session_id: uuid.UUID) -> TripState:
         return await self._deps.trips.load(session_id) or TripState(session_id=session_id)
 
+    def _uses_llm(self, function: object | None) -> bool:
+        return function is not None and self._deps.llm.enabled
+
+    async def _understand(
+        self, state: TripState, text: str, catalog: list[Destination], today: date
+    ) -> Result[TripRequest, DomainError] | None:
+        """Понимание моделью. None — разбирать правилами: LLM нет, она упала или не справилась."""
+        understand = self._tk.understand
+        if understand is None or not self._deps.llm.enabled:
+            return None
+        try:
+            return await understand(text, state, catalog=catalog, today=today, llm=self._deps.llm)
+        except LLMUnavailable as error:
+            log.warning("LLM недоступна, разбираю запрос правилами: %s", error)
+            return None
+
+    async def _narrate(self, packages: list[Package], request: TripRequest) -> list[Package]:
+        """Объяснения всех пакетов разом. Вызывается и без LLM: сравнения соседей — шаблоном."""
+        narrate = self._tk.narrate
+        if narrate is None:
+            return packages
+        knowledge = await self._knowledge(request)
+        try:
+            return await narrate(packages, request, knowledge=knowledge, llm=self._deps.llm)
+        except LLMUnavailable as error:
+            log.warning("LLM недоступна, оставляю шаблонные объяснения: %s", error)
+            return packages
+
+    async def _knowledge(self, request: TripRequest) -> list[KnowledgeHit]:
+        """Фрагменты базы знаний. Как упавший источник: без них объяснения беднее, но ход идёт."""
+        if self._deps.knowledge is None or request.destination is None:
+            return []
+        try:
+            return await self._deps.knowledge.context(request, request.destination)
+        except Exception:
+            log.warning("База знаний не ответила", exc_info=True)
+            return []
+
     def _update_request(
         self, state: TripState, text: str, catalog: list[Destination], today: date
     ) -> Result[TripRequest, DomainError]:
@@ -221,10 +295,10 @@ class MvpOrchestrator:
     def _next_question(
         self, request: TripRequest, catalog: list[Destination], today: date
     ) -> PendingQuestion | None:
-        question = self._tk.next_question(request, catalog)
+        question = self._tk.next_question(request, catalog, today=today)
         if question is not None:
             return question
-        # Запасные вопросы на случай, если уточнитель ui что-то пропустил.
+        # Запасные вопросы на случай, если уточнитель что-то пропустил.
         if request.origin is None:
             return texts.origin_question(catalog)
         if request.destination is None:

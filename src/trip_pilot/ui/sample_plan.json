@@ -1,0 +1,293 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "version": 1,
+  "stage": "compare",
+  "request": {
+    "origin": "moscow",
+    "destination": "antalya",
+    "month": 11,
+    "date_from": null,
+    "nights": null,
+    "party": {
+      "adults": 2,
+      "children_ages": [
+        5
+      ],
+      "pets": []
+    },
+    "budget": "150000",
+    "tags": [
+      "sea",
+      "warm"
+    ],
+    "must": [],
+    "assumptions": [
+      {
+        "field": "origin",
+        "value": "moscow",
+        "reason": "Город вылета не указан"
+      }
+    ]
+  },
+  "search": {
+    "check_in": "2026-11-07",
+    "check_out": "2026-11-14",
+    "nights": 7,
+    "assumptions": [
+      {
+        "field": "nights",
+        "value": "7",
+        "reason": "Длительность не указана — неделя"
+      },
+      {
+        "field": "date_from",
+        "value": "2026-11-07",
+        "reason": "Ноябрь → заезд в ближайшую субботу, 7 ноября"
+      }
+    ]
+  },
+  "packages": [
+    {
+      "id": "demo-economy",
+      "tier": "economy",
+      "destination": "antalya",
+      "outbound": {
+        "id": 767520372,
+        "mode": "flight",
+        "origin": "moscow",
+        "destination": "antalya",
+        "depart_at": "2026-11-07T19:10:00+03:00",
+        "arrive_at": "2026-11-08T01:40:00+03:00",
+        "price": "11200",
+        "stops": 1,
+        "carrier": "Демо Авиа",
+        "baggage_included": false,
+        "pets_allowed": true,
+        "is_synthetic": true
+      },
+      "inbound": {
+        "id": 155718405,
+        "mode": "flight",
+        "origin": "antalya",
+        "destination": "moscow",
+        "depart_at": "2026-11-14T19:10:00+03:00",
+        "arrive_at": "2026-11-15T01:40:00+03:00",
+        "price": "11200",
+        "stops": 1,
+        "carrier": "Демо Авиа",
+        "baggage_included": false,
+        "pets_allowed": true,
+        "is_synthetic": true
+      },
+      "hotel": {
+        "id": 4,
+        "destination": "antalya",
+        "name": "Лара Сан",
+        "stars": 3,
+        "price_per_night": "5200",
+        "meal": "AI",
+        "free_cancellation": false,
+        "pets_allowed": false,
+        "kids_friendly": true,
+        "beach_distance_m": 700,
+        "check_in_time": "14:00:00",
+        "check_out_time": "12:00:00",
+        "rating": 7.6,
+        "is_synthetic": true
+      },
+      "transfer": null,
+      "check_in": "2026-11-07",
+      "check_out": "2026-11-14",
+      "nights": 7,
+      "total": "103600",
+      "price_breakdown": {
+        "flights": "67200",
+        "hotel": "36400"
+      },
+      "issues": [
+        "Пересадок на рейсе туда: 1"
+      ],
+      "why": [
+        "Отель 3★",
+        "До пляжа 700 м"
+      ],
+      "tradeoffs": [
+        "Трансфер не включён"
+      ],
+      "risks": [
+        "Стоимость актуальна только для демонстрации",
+        "Нет бесплатной отмены отеля"
+      ]
+    },
+    {
+      "id": "demo-balance",
+      "tier": "balance",
+      "destination": "antalya",
+      "outbound": {
+        "id": 767520372,
+        "mode": "flight",
+        "origin": "moscow",
+        "destination": "antalya",
+        "depart_at": "2026-11-07T19:10:00+03:00",
+        "arrive_at": "2026-11-08T01:40:00+03:00",
+        "price": "11200",
+        "stops": 1,
+        "carrier": "Демо Авиа",
+        "baggage_included": false,
+        "pets_allowed": true,
+        "is_synthetic": true
+      },
+      "inbound": {
+        "id": 155718405,
+        "mode": "flight",
+        "origin": "antalya",
+        "destination": "moscow",
+        "depart_at": "2026-11-14T19:10:00+03:00",
+        "arrive_at": "2026-11-15T01:40:00+03:00",
+        "price": "11200",
+        "stops": 1,
+        "carrier": "Демо Авиа",
+        "baggage_included": false,
+        "pets_allowed": true,
+        "is_synthetic": true
+      },
+      "hotel": {
+        "id": 5,
+        "destination": "antalya",
+        "name": "Коньяалты Бэй",
+        "stars": 4,
+        "price_per_night": "9100",
+        "meal": "AI",
+        "free_cancellation": true,
+        "pets_allowed": true,
+        "kids_friendly": true,
+        "beach_distance_m": 300,
+        "check_in_time": "14:00:00",
+        "check_out_time": "12:00:00",
+        "rating": 8.5,
+        "is_synthetic": true
+      },
+      "transfer": {
+        "id": 5,
+        "destination": "antalya",
+        "hotel_id": 5,
+        "kind": "taxi",
+        "duration_min": 45,
+        "price": "1800",
+        "capacity": 4,
+        "pets_allowed": true
+      },
+      "check_in": "2026-11-07",
+      "check_out": "2026-11-14",
+      "nights": 7,
+      "total": "134500",
+      "price_breakdown": {
+        "flights": "67200",
+        "hotel": "63700",
+        "transfer": "3600"
+      },
+      "issues": [
+        "Пересадок на рейсе туда: 1"
+      ],
+      "why": [
+        "Отель 4★",
+        "До пляжа 300 м",
+        "Бесплатная отмена отеля"
+      ],
+      "tradeoffs": [],
+      "risks": [
+        "Стоимость актуальна только для демонстрации"
+      ]
+    },
+    {
+      "id": "demo-comfort",
+      "tier": "comfort",
+      "destination": "antalya",
+      "outbound": {
+        "id": 767520372,
+        "mode": "flight",
+        "origin": "moscow",
+        "destination": "antalya",
+        "depart_at": "2026-11-07T19:10:00+03:00",
+        "arrive_at": "2026-11-08T01:40:00+03:00",
+        "price": "11200",
+        "stops": 1,
+        "carrier": "Демо Авиа",
+        "baggage_included": false,
+        "pets_allowed": true,
+        "is_synthetic": true
+      },
+      "inbound": {
+        "id": 155718405,
+        "mode": "flight",
+        "origin": "antalya",
+        "destination": "moscow",
+        "depart_at": "2026-11-14T19:10:00+03:00",
+        "arrive_at": "2026-11-15T01:40:00+03:00",
+        "price": "11200",
+        "stops": 1,
+        "carrier": "Демо Авиа",
+        "baggage_included": false,
+        "pets_allowed": true,
+        "is_synthetic": true
+      },
+      "hotel": {
+        "id": 6,
+        "destination": "antalya",
+        "name": "Белек Резорт",
+        "stars": 5,
+        "price_per_night": "18900",
+        "meal": "AI",
+        "free_cancellation": true,
+        "pets_allowed": false,
+        "kids_friendly": false,
+        "beach_distance_m": 30,
+        "check_in_time": "14:00:00",
+        "check_out_time": "12:00:00",
+        "rating": 9.4,
+        "is_synthetic": true
+      },
+      "transfer": {
+        "id": 6,
+        "destination": "antalya",
+        "hotel_id": 6,
+        "kind": "taxi",
+        "duration_min": 25,
+        "price": "1800",
+        "capacity": 4,
+        "pets_allowed": false
+      },
+      "check_in": "2026-11-07",
+      "check_out": "2026-11-14",
+      "nights": 7,
+      "total": "203100",
+      "price_breakdown": {
+        "flights": "67200",
+        "hotel": "132300",
+        "transfer": "3600"
+      },
+      "issues": [
+        "Пересадок на рейсе туда: 1"
+      ],
+      "why": [
+        "Отель 5★",
+        "До пляжа 30 м",
+        "Бесплатная отмена отеля"
+      ],
+      "tradeoffs": [
+        "Превышает бюджет на 53 100 ₽"
+      ],
+      "risks": [
+        "Стоимость актуальна только для демонстрации"
+      ]
+    }
+  ],
+  "places": {
+    "moscow": "Москва",
+    "sochi": "Сочи",
+    "antalya": "Анталья"
+  },
+  "pending_question": null,
+  "selected_package_id": null,
+  "order": null
+}

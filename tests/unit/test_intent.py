@@ -9,6 +9,7 @@ from returns.result import Failure, Success
 from tests.fakes import DESTINATIONS
 from trip_pilot.agent.intent import parse_change, parse_request, resolve_city
 from trip_pilot.domain.errors import AmbiguousCity, DatesInPast, NoResults, UnknownCity
+from trip_pilot.domain.offers import Destination
 from trip_pilot.domain.request import Assumption, Party, TripRequest
 
 TODAY = date(2026, 10, 25)
@@ -259,3 +260,90 @@ def test_child_count_and_old_age_assumptions_are_handled_explicitly():
     ).unwrap()
     assert updated.party.children_ages == [5, 8]
     assert [item.field for item in updated.assumptions] == ["party"]
+
+
+# Каталог из 12 направлений (как в data/reference/destinations.json): страны, алиасы, «на».
+FULL_CATALOG = [
+    Destination(
+        slug=slug, name=name, country=country, iata=iata, lat=0.0, lon=0.0,
+        timezone="Europe/Moscow",
+    )
+    for slug, name, country, iata in [
+        ("moscow", "Москва", "Россия", "MOW"),
+        ("spb", "Санкт-Петербург", "Россия", "LED"),
+        ("kazan", "Казань", "Россия", "KZN"),
+        ("sochi", "Сочи", "Россия", "AER"),
+        ("anapa", "Анапа", "Россия", "AAQ"),
+        ("kaliningrad", "Калининград", "Россия", "KGD"),
+        ("murmansk", "Мурманск", "Россия", "MMK"),
+        ("antalya", "Анталья", "Турция", "AYT"),
+        ("dubai", "Дубай", "ОАЭ", "DXB"),
+        ("sharm", "Шарм-эль-Шейх", "Египет", "SSH"),
+        ("phuket", "Пхукет", "Таиланд", "HKT"),
+        ("nha-trang", "Нячанг", "Вьетнам", "CXR"),
+    ]
+]
+RUSSIA = {"moscow", "spb", "kazan", "sochi", "anapa", "kaliningrad", "murmansk"}
+
+# Фразы из ревью PR #13, часть «города»: страны, алиасы всех направлений, предлог «на»,
+# слова после «в», которые не города.
+CITY_PHRASES = [
+    ("Хочу на море в Турцию в ноябре", {"destination": "antalya", "month": 11, "tags": ["sea"]}),
+    ("во Вьетнам", {"destination": "nha-trang"}),
+    ("в Египет", {"destination": "sharm"}),
+    ("в Таиланд", {"destination": "phuket"}),
+    ("в ОАЭ", {"destination": "dubai"}),
+    ("в Эмираты", {"destination": "dubai"}),
+    ("в турцмю", {"destination": "antalya"}),
+    ("в Шарм", {"destination": "sharm"}),
+    ("в Шарм-эль-Шейх", {"destination": "sharm"}),
+    ("на Пхукет", {"destination": "phuket"}),
+    ("в Дубай", {"destination": "dubai"}),
+    ("в Нячанг", {"destination": "nha-trang"}),
+    ("в Анапу", {"destination": "anapa"}),
+    ("в Калининград", {"destination": "kaliningrad"}),
+    ("в Мурманск", {"destination": "murmansk"}),
+    ("в Казань", {"destination": "kazan"}),
+    ("в Питер", {"destination": "spb"}),
+    ("на Сочи", {"destination": "sochi"}),
+    ("в начале декабря", {"month": 12, "destination": None}),
+    ("в конце ноября", {"month": 11, "destination": None}),
+    ("в бюджете 100к", {"budget": Decimal("100000"), "destination": None}),
+    ("в рамках бюджета до 90к", {"budget": Decimal("90000"), "destination": None}),
+    ("из Москвы в начале декабря", {"origin": "moscow", "month": 12, "destination": None}),
+    ("на два дня в Сочи", {"destination": "sochi"}),
+]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"), CITY_PHRASES, ids=[text for text, _ in CITY_PHRASES]
+)
+def test_country_alias_and_non_city_phrases(text, expected):
+    result = parse_request(text, catalog=FULL_CATALOG, today=TODAY)
+    assert isinstance(result, Success), result
+    request = result.unwrap()
+    for path, value in expected.items():
+        assert field_value(request, path) == value
+
+
+def test_country_with_several_destinations_is_ambiguous():
+    for text in ["в Россию", "хочу в России"]:
+        result = parse_request(text, catalog=FULL_CATALOG, today=TODAY)
+        assert isinstance(result, Failure)
+        error = result.failure()
+        assert isinstance(error, AmbiguousCity)
+        assert set(error.candidates) == RUSSIA
+
+
+@pytest.mark.parametrize("text", ["в Сочт", "на Пхукт", "Хочу в Урюпинск", "из Урюпинска"])
+def test_close_miss_and_named_unknown_place_still_fail(text):
+    result = parse_request(text, catalog=FULL_CATALOG, today=TODAY)
+    assert isinstance(result, Failure)
+    assert isinstance(result.failure(), UnknownCity)
+
+
+def test_country_outside_catalog_is_not_invented():
+    # Вьетнама нет в каталоге из трёх городов: страна не превращается в чужой город
+    result = parse_request("во Вьетнам", catalog=DESTINATIONS, today=TODAY)
+    assert isinstance(result, Failure)
+    assert isinstance(result.failure(), UnknownCity)

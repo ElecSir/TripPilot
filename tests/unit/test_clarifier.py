@@ -66,6 +66,9 @@ def test_exact_date_satisfies_when_and_year_wrap(monkeypatch):
         ("origin", "из Масквы", "moscow"),
         ("destination", "Анталья", "antalya"),
         ("destination", "в Сочи", "sochi"),
+        ("destination", "Турция", "antalya"),
+        ("destination", "в Турцию", "antalya"),
+        ("destination", "на Анталью", "antalya"),
     ],
 )
 def test_city_answer_is_resolved_by_slot(slot, text, slug):

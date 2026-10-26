@@ -2,8 +2,10 @@
 
 from decimal import Decimal
 
+from trip_pilot.domain.knowledge import KnowledgeHit
 from trip_pilot.domain.offers import Package
 from trip_pilot.domain.request import TripRequest
+from trip_pilot.ports import LLM
 
 
 def _money(amount: Decimal) -> str:
@@ -69,3 +71,17 @@ def explain(package: Package, request: TripRequest) -> Package:
         },
         deep=True,
     )
+
+
+async def narrate(
+    packages: list[Package],
+    request: TripRequest,
+    *,
+    knowledge: list[KnowledgeHit],
+    llm: LLM,
+) -> list[Package]:
+    """Объяснения всех пакетов разом (этап 1). Заглушка лида: пока пакеты как есть.
+
+    data заменяет тело: сравнение соседей шаблоном и живой текст через LLM (задача 4).
+    """
+    return packages

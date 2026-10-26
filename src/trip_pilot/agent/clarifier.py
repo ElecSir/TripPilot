@@ -23,15 +23,17 @@ from trip_pilot.domain.trip_state import PendingQuestion
 AGE_OPTIONS = {"до 2": 1, "2–6": 4, "7–12": 9, "13–17": 15}
 
 
-def next_question(request: TripRequest, catalog: list[Destination]) -> PendingQuestion | None:
+def next_question(
+    request: TripRequest, catalog: list[Destination], *, today: date | None = None
+) -> PendingQuestion | None:
     """Выбирает один незаполненный слот в порядке origin, when, children_ages."""
     if request.origin is None:
         names = {city.slug: city.name for city in catalog}
         options = [names[slug] for slug in ("moscow", "spb", "kazan") if slug in names]
         return PendingQuestion(slot="origin", text="Откуда вылетаете?", options=options)
     if request.month is None and request.date_from is None:
-        # Контракт не передаёт today: календарь используется только для вариантов месяцев.
-        month = date.today().month
+        # today передаёт оркестратор (этап 1); без него — системная дата, как в MVP.
+        month = (today or date.today()).month
         options = [MONTHS[(month + offset) % 12].capitalize() for offset in range(3)]
         return PendingQuestion(slot="when", text="Когда хотите поехать?", options=options)
     if None in request.party.children_ages:

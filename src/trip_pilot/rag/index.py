@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from trip_pilot.adapters.db.knowledge import KbChunk, KbDocument
 from trip_pilot.adapters.db.reference import Destination
+from trip_pilot.ports import LLM
 from trip_pilot.rag.chunking import parse_frontmatter, split_into_chunks
 
 log = logging.getLogger(__name__)
@@ -112,3 +113,10 @@ async def build_index(session: AsyncSession, knowledge_dir: Path) -> None:
         changed_documents,
         skipped_documents,
     )
+
+
+async def embed_index(session: AsyncSession, llm: LLM) -> None:
+    """Эмбеддинги фрагментов (этап 1). Заглушка лида: пока ничего не делает.
+
+    rag заменяет тело (задача 4 в tasks/rag.md). Без ключа — пропуск, а не падение bootstrap.
+    """

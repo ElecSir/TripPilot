@@ -13,6 +13,7 @@ from returns.result import Success
 
 from trip_pilot.adapters.db.engine import create_engine, create_session_factory
 from trip_pilot.adapters.db.repositories import SqlOrderRepository, SqlTripStateRepository
+from trip_pilot.adapters.llm.openai_compat import make_llm
 from trip_pilot.agent.actions import SelectPackage
 from trip_pilot.api.main import build_orchestrator
 from trip_pilot.config import get_settings
@@ -35,7 +36,7 @@ def test_app_agent_plans_and_books_on_synthetic_inventory():
         try:
             sessions = create_session_factory(engine)
             trips = SqlTripStateRepository(sessions)
-            agent = build_orchestrator(sessions, trips)
+            agent = build_orchestrator(sessions, trips, llm=make_llm(get_settings()))
             session = uuid.uuid4()
 
             request = "Из Москвы в Анталью через две недели на неделю вдвоём"

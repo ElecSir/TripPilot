@@ -11,6 +11,9 @@ x-app: &app
       required: false            # поднимется и без cp .env.example .env
   environment:
     DATABASE_URL: &db_url postgresql+asyncpg://${POSTGRES_USER:-trip}:${POSTGRES_PASSWORD:-trip}@db:5432/${POSTGRES_DB:-trip}
+    # Обычно ключ приходит из .env. Пустая переменная окружения при запуске перебивает его:
+    # так scripts/ci.sh проверяет режим без LLM, как у жюри, даже если в .env есть ключ.
+    LLM_API_KEY: &llm_key ${LLM_API_KEY:-}
 
 services:
   db:
@@ -109,6 +112,7 @@ services:
     command: ["pytest", "tests/integration", "-p", "no:cacheprovider"]
     environment:
       DATABASE_URL: *db_url
+      LLM_API_KEY: *llm_key
       INTEGRATION: "1"
       E2E_BASE_URL: http://gateway:8080   # e2e ходит через шлюз, как браузер жюри
     depends_on:

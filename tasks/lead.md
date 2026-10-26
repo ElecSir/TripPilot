@@ -230,15 +230,18 @@ class TripStateRepository(Protocol):
 <a id="l1"></a>
 ### L1. Контракт этапа 1 — первым делом, data и rag ждут
 Один PR `feat(lead)!`:
-- `agent/toolkit.py`: протоколы `Understand` и `Narrate`, `today` в `NextQuestion`, поля `understand` и `narrate` в `Toolkit`. Пока data не влила свои функции, в приложении — варианты по умолчанию: `understand` → `None` (правила), `narrate` → пакеты как есть;
+- `agent/toolkit.py`: протоколы `Understand` и `Narrate`, `today` в `NextQuestion`, поля `understand` и `narrate` в `Toolkit` (не заданы — режим MVP);
 - `ports.py`: `KnowledgeBase.context(request, destination, *, limit=4)`; `domain/offers.py`: `Package.sources: list[KnowledgeHit]`;
-- оркестратор: в `AgentDeps` — `llm` и `knowledge`. Есть LLM → `understand`, `None` → правила MVP. После `explain` → `knowledge.context` → `narrate` (всегда). Шаг хода показывает режим: «Разбираю запрос с помощью ИИ» или «Разбираю запрос»;
-- `api/main.py`: `make_llm(settings)`, `PostgresKnowledgeBase(sessions)`; `cli.py`: `embed_index(session, llm)` после `build_index`; dev-образ: `COPY evals ./evals`;
-- `tests/fakes.py`: `FakeKnowledgeBase.context`; тесты оркестратора на `FakeLLM`: с ключом идёт `understand`, без ключа и при `LLMUnavailable` — правила.
+- оркестратор: в `AgentDeps` — `llm` (по умолчанию `NoLLM`) и `knowledge`. Есть LLM → `understand`; `None` или `LLMUnavailable` → правила MVP. После `explain` → `knowledge.context` → `narrate` (всегда; `LLMUnavailable` → шаблоны; упавшая база знаний → пустой список). С LLM ход показывает шаги «Разбираю запрос с помощью ИИ» и «Объясняю варианты с помощью ИИ», без LLM ход такой же, как в MVP;
+- `api/main.py`: `make_llm(settings)`, `PostgresKnowledgeBase(sessions)`, `understand` и `narrate` в `TOOLKIT`; `cli.py`: `embed_index(session, make_llm(settings))` после `build_index`;
+- заглушки с сигнатурами в зонах data и rag, как пустые файлы на шаге 0: `agent/understand.py` (`None`), `narrate` в `services/explanation.py` (пакеты как есть), `PostgresKnowledgeBase.context` (`[]`), `embed_index` (ничего). Необязательный `today` в `clarifier.next_question`, `"sources": []` в `ui/sample_plan.json`;
+- `tests/fakes.py`: `FakeKnowledgeBase.context`; тесты оркестратора: LLM понимает первой, без ключа не вызывается, при сбое — правила; `narrate` получает фрагменты, её сбой оставляет шаблоны; упавшая база знаний не ломает план; `next_question` получает `today`.
+
+Строку `COPY evals ./evals` в dev-образ добавит rag вместе с папкой `evals/` (задача 5): пока папки нет, сборка с этой строкой упала бы.
 
 Готово, когда:
 - [ ] контракт в `main`, команда предупреждена («подтяните `main`»)
-- [ ] без ключа весь CI с e2e зелёный и путь в браузере такой же, как в MVP
+- [x] без ключа весь CI с e2e через шлюз зелёный: ход такой же, как в MVP
 
 <a id="l2"></a>
 ### L2. Провайдер, модель и ключи
@@ -291,3 +294,4 @@ git switch team/lead
 | 2026-10-26 | задача 3: в приложении `MvpOrchestrator` с функциями ui и data и синтетикой из БД, заглушка удалена. Подключение `KnowledgeBase` перенесено на этап 1 |
 | 2026-10-26 | задача 5: e2e через шлюз в интеграционных тестах, сервис `tests` теперь ждёт поднятый стек; задача 1 закрыта (F5). Тег `mvp` ставится после слияния, правок разборщика от ui не ждём |
 | 2026-10-26 | тег `mvp` поставлен. Этап 1 (модель): задачи L1–L4, понимание запроса и объяснения переходят от ui к data, нагрузка лида и ui минимальная. Задания data, rag и ui переписаны под этап 1 с шапкой-навигацией и ответами на PR |
+| 2026-10-26 | задача L1: контракт этапа 1 в коде, заглушки в зонах data и rag, `make_llm` и база знаний в приложении, `embed_index` в bootstrap. `COPY evals` в dev-образ — за rag вместе с папкой `evals/` |

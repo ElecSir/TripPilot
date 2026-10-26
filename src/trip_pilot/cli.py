@@ -12,9 +12,10 @@ from alembic import command
 from alembic.config import Config
 
 from trip_pilot.adapters.db.engine import create_engine, create_session_factory
+from trip_pilot.adapters.llm.openai_compat import make_llm
 from trip_pilot.config import get_settings
 from trip_pilot.logs import setup_logging
-from trip_pilot.rag.index import build_index
+from trip_pilot.rag.index import build_index, embed_index
 from trip_pilot.seed.reference import seed_reference
 from trip_pilot.seed.synthetic import seed_inventory
 
@@ -35,6 +36,7 @@ async def seed() -> None:
             await seed_reference(session, settings.data_dir / "reference")
             await seed_inventory(session)
             await build_index(session, settings.data_dir / "knowledge")
+            await embed_index(session, make_llm(settings))  # без ключа — пропуск
             await session.commit()
     finally:
         await engine.dispose()

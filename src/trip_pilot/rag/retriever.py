@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from trip_pilot.adapters.db.knowledge import KbChunk, KbDocument
 from trip_pilot.adapters.db.reference import Destination
 from trip_pilot.domain.knowledge import KnowledgeHit
+from trip_pilot.domain.request import TripRequest
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -118,3 +119,12 @@ class PostgresKnowledgeBase:
             )
             for item in chunks
         ]
+
+    async def context(
+        self, request: TripRequest, destination: str, *, limit: int = 4
+    ) -> list[KnowledgeHit]:
+        """Разделы под запрос для объяснений. Заглушка лида: пока пусто.
+
+        rag заменяет тело (задача 3 в tasks/rag.md).
+        """
+        return []

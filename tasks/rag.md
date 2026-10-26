@@ -76,7 +76,7 @@
 
 <a id="t3"></a>
 ### 3. Контекст для объяснений: `KnowledgeBase.context` — можно сразу
-`PostgresKnowledgeBase.context(request, destination, *, limit=4) -> list[KnowledgeHit]` — разделы базы знаний под запрос. Из них `narrate` (data) строит объяснения со ссылками [S1], [S2]. Метод в порт добавит лид (задача L1), реализацию можно писать уже сейчас.
+`PostgresKnowledgeBase.context(request, destination, *, limit=4) -> list[KnowledgeHit]` — разделы базы знаний под запрос. Из них `narrate` (data) строит объяснения со ссылками [S1], [S2]. Метод уже в порте (L1), а в `PostgresKnowledgeBase` лежит заглушка лида (`return []`), подключённая в `api/main.py`: замени её тело.
 - всегда: «Почему ехать», «Минусы и риски»;
 - есть дети → «С детьми»; есть животные → «С животными»; известен месяц → «Когда лучше»;
 - плюс общие правила по теме из [задачи 6](#t6), если они есть;
@@ -89,7 +89,7 @@
 
 <a id="t4"></a>
 ### 4. Эмбеддинги и гибридный поиск — после ключа
-- `embed_index(session, llm)` в `rag/index.py`: эмбеддинги для фрагментов без `embedding` или с другим `embedding_model`, пачками по 64, модель записывается в `embedding_model`. Вызов из bootstrap добавит лид (задача L1).
+- `embed_index(session, llm)` в `rag/index.py`: эмбеддинги для фрагментов без `embedding` или с другим `embedding_model`, пачками по 64, модель записывается в `embedding_model`. Заглушка уже лежит в `rag/index.py`, а bootstrap (`cli.py`) уже её вызывает (L1): замени тело.
 - Без ключа (`LLMUnavailable`) — пропустить с одной строкой в логе. Размерность не 1024 (`EMBEDDING_DIM`) — предупреждение и пропуск, а не падение bootstrap. Если API принимает параметр `dimensions`, передавай 1024.
 - `search`: есть ключ → вектор запроса + полнотекст, слияние RRF (k = 60); нет ключа или эмбеддинг запроса упал → только полнотекст, как сейчас. Сигнатура `search` не меняется.
 
@@ -99,7 +99,7 @@
 
 <a id="t5"></a>
 ### 5. Прогон оценки `evals/` — можно сразу
-Цифры для жюри и для нас: насколько модель лучше правил. `evals/run.py`, запуск в dev-образе (лид добавит `evals/` в dev-образ, задача L1).
+Цифры для жюри и для нас: насколько модель лучше правил. `evals/run.py`, запуск в dev-образе. Строку `COPY evals ./evals` в стадию `dev` файла `docker/app.Dockerfile` добавь в своём PR вместе с папкой `evals/` (согласовано с лидом: пока папки нет, сборка образа с этой строкой упала бы).
 - **Разбор запроса.** Кейсы — `evals/cases/parse.yaml` от data (формат — в `tasks/data.md`, задача 6). Прогоняются правила (`parse_request`) и, если есть ключ, LLM (`understand`). Выводится доля верных полей и список провалов.
 - **Поиск.** Кейсы — `evals/cases/retrieval.yaml` (твои, ≥ 30): запрос + направление → ожидаемый раздел. Выводятся Recall@5 и MRR для полнотекста и гибрида.
 - Итог — таблица в stdout. В CI прогон не входит: ему нужен ключ.
@@ -132,7 +132,7 @@
 <a id="contracts"></a>
 ## Контракты этапа 1
 
-Лид кладёт их в `main` задачей L1 (`feat(lead)!`). До этого ниже — черновик; если он разойдётся с кодом в `main`, прав код.
+Уже в `main` (задача L1 лида), вместе с заглушками `context` и `embed_index` в твоих файлах. Ниже — выжимка, точные сигнатуры — в `ports.py`; если выжимка разойдётся с кодом, прав код.
 
 ```python
 # ports.py — KnowledgeBase, новый метод (ты реализуешь в PostgresKnowledgeBase)
@@ -151,7 +151,7 @@ Package.sources: list[KnowledgeHit] = []
 Кто вызывает твой код:
 - оркестратор: `knowledge.context(request, destination)` после сборки пакетов, результат — в `narrate` (data);
 - `understand` и `narrate` (data): `llm.structured(...)` и `llm.complete(...)`;
-- приложение: `make_llm(settings)` и `PostgresKnowledgeBase(sessions)` в `api/main.py` (лид, задача L1).
+- приложение: `make_llm(settings)` и `PostgresKnowledgeBase(sessions)` в `api/main.py`, `embed_index(session, make_llm(settings))` в bootstrap — уже подключено (L1).
 
 Ключ LLM задаётся в `.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `EMBEDDINGS_MODEL`. Ключ выдаёт лид. Храни его только в `.env`, никогда в чате, коде, тестах и PR. В тестах — подменённый клиент или `FakeLLM`.
 
@@ -182,3 +182,4 @@ Package.sources: list[KnowledgeHit] = []
 |---|---|
 | 2026-10-23 | первая версия |
 | 2026-10-26 | этап 1: ответ на PR #11, задачи 1–6 этапа 1, черновик контрактов (`KnowledgeBase.context`, `embed_index`, `LLMUnavailable` на любой сбой). MVP-задачи свёрнуты в список (полный текст — `git show mvp:tasks/rag.md`) |
+| 2026-10-26 | контракт этапа 1 в `main` (L1): задачи «после L1» можно начинать; в твоих файлах лежат заглушки лида с нужными сигнатурами — замени их тела |

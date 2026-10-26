@@ -1,18 +1,20 @@
 """Сценарии MvpOrchestrator на фейках.
 
-Функции зон ui и data здесь заменены простыми версиями на правилах: тест проверяет
+Функции зоны data здесь заменены простыми версиями на правилах: тест проверяет
 логику оркестратора (какой шаг, какой вопрос, что сохраняется), а не качество разбора.
 """
 
 import asyncio
 import re
 import uuid
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
+import pytest
 from returns.result import Failure, Success
 
-from tests.fakes import fake_sources
+from tests.fakes import FakeLLM, fake_sources
 from trip_pilot.agent.actions import SelectPackage
 from trip_pilot.agent.dates import first_saturday, resolve_window
 from trip_pilot.agent.events import (
@@ -23,12 +25,13 @@ from trip_pilot.agent.events import (
     StageEvent,
     StepEvent,
 )
-from trip_pilot.agent.orchestrator import AgentDeps, MvpOrchestrator, places_of
+from trip_pilot.agent.orchestrator import AgentDeps, MvpOrchestrator, NoLLM, places_of
 from trip_pilot.agent.toolkit import Toolkit
 from trip_pilot.domain.errors import BudgetTooLow, NoResults, UnknownCity
 from trip_pilot.domain.offers import Package
 from trip_pilot.domain.request import Party, TripRequest
 from trip_pilot.domain.trip_state import Order, PendingQuestion, TripState
+from trip_pilot.ports import LLM, LLMUnavailable
 
 TODAY = date(2026, 10, 24)  # суббота; ближайшая подходящая суббота ноября — 7-е
 CITIES = {"москв": "moscow", "сочи": "sochi", "анталь": "antalya"}
@@ -67,7 +70,7 @@ def parse_change(text, current, *, today):
     return None
 
 
-def next_question(request, catalog):
+def next_question(request, catalog, *, today):
     if request.origin is None:
         return PendingQuestion(slot="origin", text="Откуда полетите?", options=["Москва"])
     if None in request.party.children_ages:
@@ -136,12 +139,13 @@ TOOLKIT = Toolkit(
 # --- Обвязка ---------------------------------------------------------------------------------
 
 class Dialog:
-    def __init__(self, hotels=None):
+    def __init__(self, hotels=None, *, toolkit=TOOLKIT, llm=None, knowledge=None):
         self.src = fake_sources()
         deps = AgentDeps(
             catalog=self.src.catalog, hotels=hotels or self.src.hotels,
             transport=self.src.transport, transfers=self.src.transfers,
-            trips=self.src.trips, toolkit=TOOLKIT,
+            trips=self.src.trips, toolkit=toolkit, llm=llm or NoLLM(),
+            knowledge=knowledge or self.src.knowledge,
         )
         self.agent = MvpOrchestrator(deps, today=lambda: TODAY)
         self.session = uuid.uuid4()
@@ -326,6 +330,128 @@ def test_places_keep_unknown_slug_as_is():
         session_id=uuid.uuid4(), request=TripRequest(origin="moscow", destination="atlantis")
     )
     assert places_of(state, {"moscow": "Москва"}) == {"atlantis": "atlantis", "moscow": "Москва"}
+
+
+# --- Этап 1: LLM поверх правил ---------------------------------------------------------------
+
+REQUEST = "Из Москвы в Анталью в ноябре"
+
+
+def steps(events):
+    return [e.text for e in of(events, StepEvent)]
+
+
+def understand_as(request):
+    """understand, который «понял» любое сообщение как готовый запрос, и список вызовов."""
+    calls = []
+
+    async def understand(text, state, *, catalog, today, llm):
+        calls.append(text)
+        return Success(request)
+
+    return understand, calls
+
+
+def test_no_llm_behaves_like_adapter_without_key():
+    llm = NoLLM()
+    assert isinstance(llm, LLM)
+    assert llm.enabled is False
+    with pytest.raises(LLMUnavailable):
+        asyncio.run(llm.complete([]))
+
+
+def test_llm_understanding_goes_first():
+    understand, calls = understand_as(TripRequest(origin="moscow", destination="sochi", month=11))
+    d = Dialog(toolkit=replace(TOOLKIT, understand=understand), llm=FakeLLM([]))
+    events = d.say("хочу к морю, но поближе")  # правила такое не поймут
+
+    assert calls == ["хочу к морю, но поближе"]
+    assert "Разбираю запрос с помощью ИИ" in steps(events)
+    assert d.state.request.destination == "sochi"
+    assert len(d.state.packages) == 3
+
+
+def test_without_key_understanding_is_not_called():
+    understand, calls = understand_as(TripRequest(origin="moscow", destination="sochi", month=11))
+    d = Dialog(toolkit=replace(TOOLKIT, understand=understand), llm=FakeLLM())  # ключа нет
+    events = d.say(REQUEST)
+
+    assert calls == []
+    assert "Разбираю запрос с помощью ИИ" not in steps(events)
+    assert d.state.request.destination == "antalya"  # разобрали правила
+
+
+def test_llm_failure_or_refusal_falls_back_to_rules():
+    async def broken(text, state, *, catalog, today, llm):
+        raise LLMUnavailable("таймаут после повторов")
+
+    async def gave_up(text, state, *, catalog, today, llm):
+        return None
+
+    for understand in (broken, gave_up):
+        d = Dialog(toolkit=replace(TOOLKIT, understand=understand), llm=FakeLLM([]))
+        d.say(REQUEST)
+        assert d.state.request.destination == "antalya"
+        assert len(d.state.packages) == 3
+
+
+def test_narrate_gets_knowledge_and_its_text_reaches_plan():
+    seen = []
+
+    async def narrate(packages, request, *, knowledge, llm):
+        seen.extend(hit.heading_path for hit in knowledge)
+        update = {"why": ["Живой текст [S1]"], "sources": knowledge}
+        return [p.model_copy(update=update) for p in packages]
+
+    d = Dialog(toolkit=replace(TOOLKIT, narrate=narrate))  # без LLM narrate тоже вызывается
+    d.say(REQUEST)
+
+    assert seen == ["Анталья › Почему ехать"]
+    assert d.state.packages[0].why == ["Живой текст [S1]"]
+    assert d.state.packages[0].sources[0].heading_path == "Анталья › Почему ехать"
+
+
+def test_narrate_failure_keeps_template_explanations():
+    async def narrate(packages, request, *, knowledge, llm):
+        raise LLMUnavailable("ответ не прошёл схему")
+
+    d = Dialog(toolkit=replace(TOOLKIT, narrate=narrate), llm=FakeLLM([]))
+    events = d.say(REQUEST)
+
+    assert "Объясняю варианты с помощью ИИ" in steps(events)
+    assert d.state.packages[0].why == ["3★ Лара Сан"]  # шаблон explain
+
+
+def test_broken_knowledge_base_does_not_break_plan():
+    class BrokenKnowledge:
+        async def search(self, query, *, destination=None, doc_type=None, limit=5):
+            raise ConnectionError("БД недоступна")
+
+        async def context(self, request, destination, *, limit=4):
+            raise ConnectionError("БД недоступна")
+
+    seen = []
+
+    async def narrate(packages, request, *, knowledge, llm):
+        seen.append(knowledge)
+        return packages
+
+    d = Dialog(toolkit=replace(TOOLKIT, narrate=narrate), knowledge=BrokenKnowledge())
+    d.say(REQUEST)
+
+    assert seen == [[]]
+    assert len(d.state.packages) == 3
+
+
+def test_next_question_gets_today():
+    seen = []
+
+    def spy(request, catalog, *, today):
+        seen.append(today)
+        return next_question(request, catalog, today=today)
+
+    Dialog(toolkit=replace(TOOLKIT, next_question=spy)).say(REQUEST)
+    assert seen == [TODAY]
 
 
 # --- Даты ------------------------------------------------------------------------------------

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from trip_pilot.domain.knowledge import KnowledgeHit
 from trip_pilot.domain.offers import Destination, Hotel, Leg, Package, Transfer
-from trip_pilot.domain.request import Party
+from trip_pilot.domain.request import Party, TripRequest
 from trip_pilot.domain.trip_state import Order, TripState
 from trip_pilot.ports import ChatMessages, LLMUnavailable
 
@@ -183,6 +183,20 @@ class FakeKnowledgeBase:
                     score=float(score),
                 ))
         return sorted(hits, key=lambda h: h.score, reverse=True)[:limit]
+
+    async def context(
+        self, request: TripRequest, destination: str, *, limit: int = 4
+    ) -> list[KnowledgeHit]:
+        # Как у настоящей: «Почему ехать» всегда, «С детьми» — если в поездке есть дети.
+        sections = ["Почему ехать"] + (["С детьми"] if request.party.children_ages else [])
+        return [
+            KnowledgeHit(
+                text=text, title=title, heading_path=heading, source="synthetic", score=1.0
+            )
+            for section in sections
+            for dest, _, title, heading, text in _KNOWLEDGE
+            if dest == destination and heading.endswith(f"› {section}")
+        ][:limit]
 
 
 class FakeLLM:

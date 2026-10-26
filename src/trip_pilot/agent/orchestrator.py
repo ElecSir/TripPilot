@@ -1,8 +1,8 @@
 """Оркестратор агента.
 
-StubOrchestrator — заглушка, работает в приложении, пока зоны ui и data не влили свои функции.
 MvpOrchestrator — линейный сценарий MVP без LLM: каждое сообщение обновляет запрос
 и досчитывает то, чего не хватает. Ход: загрузить план → обработать → сохранить → done.
+Собирается с настоящими адаптерами и функциями зон в api/main.py.
 """
 
 import asyncio
@@ -41,28 +41,6 @@ from trip_pilot.ports import (
 )
 
 log = logging.getLogger(__name__)
-
-
-class StubOrchestrator:
-    """Заглушка: проверяет путь UI → API → ядро → UI. Интерфейс тот же, что у MvpOrchestrator."""
-
-    async def handle(self, session_id: uuid.UUID, text: str) -> AsyncIterator[AgentEvent]:
-        yield StageEvent(stage="intake")
-        yield StepEvent(text="Разбираю запрос")
-        await asyncio.sleep(0.3)
-        yield StepEvent(text="Агент ещё не подключён: это заглушка")
-
-        reply = f"Принял запрос: «{text}». Скоро здесь появится план поездки."
-        for word in reply.split(" "):
-            yield DeltaEvent(text=word + " ")
-            await asyncio.sleep(0.02)
-        yield DoneEvent()
-
-    async def handle_action(
-        self, session_id: uuid.UUID, action: AgentAction
-    ) -> AsyncIterator[AgentEvent]:
-        yield StepEvent(text=f"Получен выбор пакета {action.package_id}: обработка появится позже")
-        yield DoneEvent()
 
 
 def places_of(state: TripState, names: dict[str, str]) -> dict[str, str]:

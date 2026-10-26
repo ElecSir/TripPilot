@@ -45,7 +45,7 @@ from trip_pilot.ui.plan_view import (
 from trip_pilot.ui.theme import theme_css
 
 LOGGER = logging.getLogger(__name__)
-DEMO_PLAN_ENABLED = True  # Отключить после интеграции события plan.
+DEMO_PLAN_ENABLED = False  # Отключить после интеграции события plan.
 SAMPLE_PLAN_PATH = Path(__file__).with_name("sample_plan.json")
 STAGE_LABELS = {
     "intake": "Разбираю запрос",

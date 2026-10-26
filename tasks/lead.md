@@ -181,7 +181,7 @@ class TripStateRepository(Protocol):
 - ответ на вопрос разбирает `clarifier.apply_answer` (ui) по `PendingQuestion.slot`;
 - даты поиска считает оркестратор (`agent/dates.py`): ближайшая суббота месяца не раньше чем через 3 дня, 7 ночей по умолчанию. Результат — `TripState.search`, запрос пользователя остаётся как есть;
 - тексты резюме — шаблоны в `agent/texts.py`;
-- в приложении пока `StubOrchestrator`, `MvpOrchestrator` подключается в задаче 3;
+- `MvpOrchestrator` подключён в приложение в задаче 3, заглушка `StubOrchestrator` удалена;
 - сигнатуры функций ui и data зафиксированы в `agent/toolkit.py`.
 
 ### 2а. Названия мест в плане
@@ -189,8 +189,8 @@ class TripStateRepository(Protocol):
 - [x] поле в контракте, заполнение в `MvpOrchestrator`, тесты; задание ui обновлено
 
 ### 3. Подключение реальных адаптеров
-В `api/main.py` подставить репозитории data и `KnowledgeBase` rag вместо фейков, собрать `Toolkit` из функций ui и data и заменить `StubOrchestrator` на `MvpOrchestrator`.
-- [ ] в `docker compose up` тот же путь работает на синтетике из БД
+В `api/main.py` собрать `Toolkit` из функций ui и data, подставить синтетические источники data вместо фейков и заменить `StubOrchestrator` на `MvpOrchestrator`. `KnowledgeBase` rag подключается на этапе 1: в MVP её никто не вызывает.
+- [x] в `docker compose up` тот же путь работает на синтетике из БД (`tests/integration/test_agent.py`, проверено в браузере)
 
 ### 4. Заказы и имитация оплаты
 Таблица `orders` в `adapters/db/orders.py`, миграция, `POST /api/orders` с идемпотентностью по ключу. Номер заказа в формате `TP-<год>-<6 цифр>`. Зависит от задачи 1: пакет для заказа берётся из сохранённого плана.
@@ -236,3 +236,4 @@ git switch team/lead
 | 2026-10-24 | GitHub Actions не запускаются из-за биллинга организации. Добавлен `scripts/ci.sh` — все шаги CI одной командой, его же вызывает workflow. CI теперь только на PR (без повторного прогона после слияния в main), без черновиков и PR с одной документацией, с отменой устаревших прогонов |
 | 2026-10-24 | безопасность данных: порты pgAdmin и БД для разработки только на `127.0.0.1`; pgAdmin в серверном режиме со входом (раньше пускал без пароля), пароль — из `.env`; `.gitignore` и `.dockerignore` закрывают все `.env.*`, ключи и сертификаты; gitleaks в `scripts/ci.sh`; хуки `.githooks` (`pre-commit` — секреты, `pre-push` — запрет push в `main`); раздел «Безопасность» в README и `AGENTS.md` |
 | 2026-10-25 | задача 2а: контракт `TripState.places` (slug → название), оркестратор заполняет его на каждом ходу; обещано ui в ревью PR #7 |
+| 2026-10-26 | задача 3: в приложении `MvpOrchestrator` с функциями ui и data и синтетикой из БД, заглушка удалена. Подключение `KnowledgeBase` перенесено на этап 1 |

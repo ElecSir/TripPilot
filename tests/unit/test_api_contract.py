@@ -8,11 +8,19 @@ from contextlib import contextmanager
 from fastapi.testclient import TestClient
 
 from tests.fakes import FakeSources, fake_sources, sample_package
-from trip_pilot.agent.events import parse_event
+from trip_pilot.agent.events import DoneEvent, StepEvent, parse_event
 from trip_pilot.api.main import create_app
 from trip_pilot.domain.trip_state import TripState
 
 SESSION = "6f1c1a52-6c4e-4a43-9a51-2a8a3c9f1a10"
+
+
+class EchoAgent:
+    """Двойник агента: здесь проверяется маршрут, а не оркестратор (он — в test_orchestrator)."""
+
+    async def handle_action(self, session_id, action):
+        yield StepEvent(text=f"Выбран пакет {action.package_id}")
+        yield DoneEvent()
 
 
 def client() -> TestClient:
@@ -55,13 +63,15 @@ def test_chat_needs_exactly_one_of_text_or_action():
 
 def test_select_package_action_streams_events():
     payload = {"session_id": SESSION, "action": {"type": "select_package", "package_id": "p2"}}
-    with client() as c, c.stream("POST", "/api/chat", json=payload) as resp:
-        assert resp.status_code == 200
-        events = [
-            parse_event(line.removeprefix("data: "))
-            for line in resp.iter_lines()
-            if line.startswith("data: ")
-        ]
+    with client() as c:
+        c.app.state.orchestrator = EchoAgent()
+        with c.stream("POST", "/api/chat", json=payload) as resp:
+            assert resp.status_code == 200
+            events = [
+                parse_event(line.removeprefix("data: "))
+                for line in resp.iter_lines()
+                if line.startswith("data: ")
+            ]
     assert events[-1].type == "done"
     assert any(e.type == "step" and "p2" in e.text for e in events)
 

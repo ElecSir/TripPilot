@@ -6,9 +6,9 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
-from tests.fakes import fake_sources
+from tests.fakes import FakeLLM, fake_sources
 from trip_pilot.agent.actions import SelectPackage
-from trip_pilot.agent.events import PlanEvent, QuestionEvent
+from trip_pilot.agent.events import PlanEvent, QuestionEvent, StepEvent
 from trip_pilot.agent.orchestrator import AgentDeps, MvpOrchestrator
 from trip_pilot.api.main import TOOLKIT, create_app
 from trip_pilot.domain.trip_state import TripState
@@ -16,11 +16,12 @@ from trip_pilot.domain.trip_state import TripState
 TODAY = date(2026, 10, 26)
 
 
-def agent_on_fakes() -> MvpOrchestrator:
+def agent_on_fakes(llm=None) -> MvpOrchestrator:
     src = fake_sources()
     deps = AgentDeps(
         catalog=src.catalog, hotels=src.hotels, transport=src.transport,
-        transfers=src.transfers, trips=src.trips, toolkit=TOOLKIT,
+        transfers=src.transfers, trips=src.trips, toolkit=TOOLKIT, knowledge=src.knowledge,
+        **({"llm": llm} if llm is not None else {}),
     )
     return MvpOrchestrator(deps, today=lambda: TODAY)
 
@@ -62,3 +63,12 @@ def test_real_toolkit_goes_from_request_to_checkout():
     chosen = plan_of(run(agent.handle_action(session, SelectPackage(package_id=package_id))))
     assert chosen.stage == "checkout"
     assert chosen.selected_package_id == package_id
+
+
+def test_with_key_but_stub_functions_agent_does_not_claim_ai():
+    # Ключ задан, а understand и narrate у data — пока заглушки: модель не вызывается,
+    # и шаги «с помощью ИИ» в интерфейсе появляться не должны.
+    events = run(agent_on_fakes(FakeLLM([])).handle(uuid.uuid4(), "Из Москвы в Анталью в ноябре"))
+    steps = [e.text for e in events if isinstance(e, StepEvent)]
+    assert not [s for s in steps if "с помощью ИИ" in s]
+    assert plan_of(events).packages  # путь тот же, что в MVP

@@ -92,7 +92,7 @@ migrations/       # Alembic
 data/             # справочники и документы для RAG
 docker/           # Dockerfile, конфиг nginx, pgAdmin
 docs/             # документация
-tests/            # pytest: unit/ на фейках (tests/fakes.py), integration/ на настоящем Postgres
+tests/            # pytest: unit/ на фейках (tests/fakes.py), integration/ на Postgres и e2e через шлюз
 .github/          # CI: линтер, тесты, запуск стека и проверка /health
 ```
 
@@ -126,7 +126,7 @@ docker compose run --rm bootstrap      # применить
 docker compose run --rm bootstrap alembic check   # ORM и БД совпадают?
 ```
 
-**Локальный CI** — все шаги GitHub Actions одной командой: линтер, юнит-тесты, запуск стека и `/health`, миграции, интеграционные тесты. Actions вызывает этот же скрипт, поэтому «прошло локально» = «прошло бы в CI». Локальный Python не нужен, всё идёт в контейнерах.
+**Локальный CI** — все шаги GitHub Actions одной командой: линтер, юнит-тесты, запуск стека и `/health`, миграции, интеграционные тесты и e2e-сценарий MVP через шлюз (запрос → ответ на вопрос → пакеты → выбор → заказ). Actions вызывает этот же скрипт, поэтому «прошло локально» = «прошло бы в CI». Локальный Python не нужен, всё идёт в контейнерах.
 
 ```bash
 sh scripts/ci.sh                                           # Git Bash, Linux, macOS (или make ci)
@@ -138,7 +138,7 @@ sh scripts/ci.sh                                           # Git Bash, Linux, ma
 ```bash
 make test        # или: docker build -f docker/app.Dockerfile --target dev -t trip-pilot-dev . && docker run --rm trip-pilot-dev pytest
 make lint
-make test-integration   # или: docker compose --profile tests run --rm tests (поднимет БД и прогонит миграции)
+make test-integration   # или: docker compose --profile tests run --rm tests (поднимет стек, если он не запущен)
 ```
 
 **GitHub Actions** запускается только на pull request, кроме черновиков и PR, где менялась только документация (`*.md`, `docs/`, `tasks/`). Новый push в PR отменяет устаревший прогон. Ручной запуск: Actions → CI → Run workflow.

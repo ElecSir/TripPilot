@@ -65,6 +65,18 @@ class StubOrchestrator:
         yield DoneEvent()
 
 
+def places_of(state: TripState, names: dict[str, str]) -> dict[str, str]:
+    """Названия всех мест плана: откуда, куда и пункты рейсов. Неизвестный slug — как есть."""
+    slugs: set[str] = set()
+    if state.request is not None:
+        slugs.update(s for s in (state.request.origin, state.request.destination) if s)
+    for package in state.packages:
+        slugs.add(package.destination)
+        for leg in (package.outbound, package.inbound):
+            slugs.update((leg.origin, leg.destination))
+    return {slug: names.get(slug, slug) for slug in sorted(slugs)}
+
+
 @dataclass(frozen=True)
 class AgentDeps:
     """Всё, что нужно оркестратору: порты (данные, хранилище плана) и функции зон ui и data."""
@@ -270,7 +282,12 @@ class MvpOrchestrator:
         question: PendingQuestion | None = None,
     ) -> list[AgentEvent]:
         """Завершение хода: версия + 1, план сохраняется ДО done — клиент может сразу уйти."""
-        update: dict[str, Any] = {"version": state.version + 1, "pending_question": question}
+        catalog = await self._deps.catalog.all()
+        update: dict[str, Any] = {
+            "version": state.version + 1,
+            "pending_question": question,
+            "places": places_of(state, {d.slug: d.name for d in catalog}),
+        }
         if stage is not None:
             update["stage"] = stage
         state = state.model_copy(update=update)

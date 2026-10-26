@@ -140,7 +140,8 @@ def sample_package(
     hotel = min(hotels, key=lambda h: h.price_per_night)
     transfer = next(t for t in TRANSFERS if t.hotel_id == hotel.id)
     breakdown = {
-        "flights": (out.price + back.price) * party.travellers,
+        "outbound": out.price * party.travellers,
+        "inbound": back.price * party.travellers,
         "hotel": hotel.price_per_night * nights,
         "transfer": transfer.price * 2,
     }

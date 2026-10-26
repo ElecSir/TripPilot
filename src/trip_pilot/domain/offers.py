@@ -94,6 +94,7 @@ class Package(BaseModel):
     check_out: date
     nights: int = Field(ge=1)
     total: Decimal = Field(gt=0)  # перелёты × пассажиры + отель × ночи + трансфер × 2
+    # Ключи: hotel, outbound (перелёт туда), inbound (обратно), transfer. Подписи для людей — в UI.
     price_breakdown: dict[str, Decimal] = {}
     issues: list[str] = []  # предупреждения проверки стыковок
     why: list[str] = []

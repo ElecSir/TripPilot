@@ -129,7 +129,7 @@ def package_selected(package: Package) -> str:
     return (
         f"Выбран пакет «{TIERS[package.tier]}»: {package.hotel.name}, "
         f"{period(package.check_in, package.check_out)}, итого {money(package.total)}. "
-        "Оформляем? Нажмите «Оформить»."
+        "Оформляем? Нажмите «Перейти к оплате» в корзине."
     )
 
 

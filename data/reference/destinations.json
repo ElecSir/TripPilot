@@ -1,14 +1,14 @@
 [
-  {"slug": "moscow", "name": "Москва", "country": "Россия", "iata": "MOW", "lat": 55.7558, "lon": 37.6173, "timezone": "Europe/Moscow"},
-  {"slug": "spb", "name": "Санкт-Петербург", "country": "Россия", "iata": "LED", "lat": 59.9386, "lon": 30.3141, "timezone": "Europe/Moscow"},
-  {"slug": "kazan", "name": "Казань", "country": "Россия", "iata": "KZN", "lat": 55.7963, "lon": 49.1088, "timezone": "Europe/Moscow"},
-  {"slug": "sochi", "name": "Сочи", "country": "Россия", "iata": "AER", "lat": 43.5855, "lon": 39.7231, "timezone": "Europe/Moscow"},
-  {"slug": "anapa", "name": "Анапа", "country": "Россия", "iata": "AAQ", "lat": 44.8946, "lon": 37.3165, "timezone": "Europe/Moscow"},
-  {"slug": "kaliningrad", "name": "Калининград", "country": "Россия", "iata": "KGD", "lat": 54.7104, "lon": 20.4522, "timezone": "Europe/Kaliningrad"},
-  {"slug": "murmansk", "name": "Мурманск", "country": "Россия", "iata": "MMK", "lat": 68.9585, "lon": 33.0827, "timezone": "Europe/Moscow"},
-  {"slug": "antalya", "name": "Анталья", "country": "Турция", "iata": "AYT", "lat": 36.8969, "lon": 30.7133, "timezone": "Europe/Istanbul"},
-  {"slug": "dubai", "name": "Дубай", "country": "ОАЭ", "iata": "DXB", "lat": 25.2048, "lon": 55.2708, "timezone": "Asia/Dubai"},
-  {"slug": "sharm", "name": "Шарм-эль-Шейх", "country": "Египет", "iata": "SSH", "lat": 27.9158, "lon": 34.3300, "timezone": "Africa/Cairo"},
-  {"slug": "phuket", "name": "Пхукет", "country": "Таиланд", "iata": "HKT", "lat": 7.8804, "lon": 98.3923, "timezone": "Asia/Bangkok"},
-  {"slug": "nha-trang", "name": "Нячанг", "country": "Вьетнам", "iata": "CXR", "lat": 12.2388, "lon": 109.1967, "timezone": "Asia/Ho_Chi_Minh"}
+  {"slug": "moscow", "name": "Москва", "country": "Россия", "iata": "MOW", "lat": 55.7558, "lon": 37.6173, "timezone": "Europe/Moscow", "tags": ["city"], "warm_months": [5, 6, 7, 8, 9]},
+  {"slug": "spb", "name": "Санкт-Петербург", "country": "Россия", "iata": "LED", "lat": 59.9386, "lon": 30.3141, "timezone": "Europe/Moscow", "tags": ["city"], "warm_months": [5, 6, 7, 8, 9]},
+  {"slug": "kazan", "name": "Казань", "country": "Россия", "iata": "KZN", "lat": 55.7963, "lon": 49.1088, "timezone": "Europe/Moscow", "tags": ["city"], "warm_months": [5, 6, 7, 8, 9]},
+  {"slug": "sochi", "name": "Сочи", "country": "Россия", "iata": "AER", "lat": 43.5855, "lon": 39.7231, "timezone": "Europe/Moscow", "tags": ["sea", "nature"], "warm_months": [6, 7, 8, 9]},
+  {"slug": "anapa", "name": "Анапа", "country": "Россия", "iata": "AAQ", "lat": 44.8946, "lon": 37.3165, "timezone": "Europe/Moscow", "tags": ["sea"], "warm_months": [6, 7, 8, 9]},
+  {"slug": "kaliningrad", "name": "Калининград", "country": "Россия", "iata": "KGD", "lat": 54.7104, "lon": 20.4522, "timezone": "Europe/Kaliningrad", "tags": ["city", "nature"], "warm_months": [5, 6, 7, 8, 9]},
+  {"slug": "murmansk", "name": "Мурманск", "country": "Россия", "iata": "MMK", "lat": 68.9585, "lon": 33.0827, "timezone": "Europe/Moscow", "tags": ["nature", "winter"], "warm_months": [6, 7, 8]},
+  {"slug": "antalya", "name": "Анталья", "country": "Турция", "iata": "AYT", "lat": 36.8969, "lon": 30.7133, "timezone": "Europe/Istanbul", "tags": ["sea", "warm"], "warm_months": [5, 6, 7, 8, 9, 10]},
+  {"slug": "dubai", "name": "Дубай", "country": "ОАЭ", "iata": "DXB", "lat": 25.2048, "lon": 55.2708, "timezone": "Asia/Dubai", "tags": ["city", "sea", "warm"], "warm_months": [11, 12, 1, 2, 3, 4]},
+  {"slug": "sharm", "name": "Шарм-эль-Шейх", "country": "Египет", "iata": "SSH", "lat": 27.9158, "lon": 34.3300, "timezone": "Africa/Cairo", "tags": ["sea", "warm", "nature"], "warm_months": [4, 5, 6, 7, 8, 9, 10, 11]},
+  {"slug": "phuket", "name": "Пхукет", "country": "Таиланд", "iata": "HKT", "lat": 7.8804, "lon": 98.3923, "timezone": "Asia/Bangkok", "tags": ["sea", "warm", "nature"], "warm_months": [11, 12, 1, 2, 3, 4]},
+  {"slug": "nha-trang", "name": "Нячанг", "country": "Вьетнам", "iata": "CXR", "lat": 12.2388, "lon": 109.1967, "timezone": "Asia/Ho_Chi_Minh", "tags": ["sea", "warm"], "warm_months": [1, 2, 3, 4, 5, 6, 7, 8, 9]}
 ]

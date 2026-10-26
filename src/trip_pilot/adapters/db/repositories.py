@@ -45,10 +45,13 @@ class SqlTripStateRepository:
         return TripState.model_validate(row.data) if row else None
 
     async def save(self, state: TripState) -> None:
+        data = state.model_dump(mode="json")  # Decimal и даты — строками, без потерь
+        # Кеш поиска исключён из model_dump (в UI он не нужен), но для пересборки его храним.
+        data["cache"] = state.cache.model_dump(mode="json") if state.cache else None
         stmt = insert(TripStateRow).values(
             session_id=state.session_id,
             version=state.version,
-            data=state.model_dump(mode="json"),  # Decimal и даты — строками, без потерь
+            data=data,
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=[TripStateRow.session_id],

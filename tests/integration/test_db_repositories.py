@@ -16,7 +16,7 @@ from tests.fakes import sample_package
 from trip_pilot.adapters.db.engine import create_engine, create_session_factory
 from trip_pilot.adapters.db.repositories import SqlOrderRepository, SqlTripStateRepository
 from trip_pilot.config import get_settings
-from trip_pilot.domain.trip_state import TripState
+from trip_pilot.domain.trip_state import SearchCache, TripState
 from trip_pilot.services.booking import place_order
 
 pytestmark = pytest.mark.skipif(
@@ -50,6 +50,25 @@ def test_trip_state_roundtrip_and_upsert():
         await trips.save(state.model_copy(update={"version": 1, "stage": "compare"}))
         loaded = await trips.load(state.session_id)
         assert (loaded.version, loaded.stage) == (1, "compare")
+
+    on_db(scenario)
+
+
+def test_search_cache_is_stored_but_not_public():
+    async def scenario(trips, _):
+        package = sample_package()
+        cache = SearchCache(
+            origin="moscow", destination="antalya", check_in=package.check_in,
+            check_out=package.check_out, travellers=2, outbound=[package.outbound],
+            inbound=[package.inbound], hotels=[package.hotel],
+            transfers_by_hotel={package.hotel.id: [package.transfer]},
+        )
+        state = TripState(session_id=uuid.uuid4(), packages=[package], cache=cache)
+        await trips.save(state)
+        loaded = await trips.load(state.session_id)
+
+        assert loaded.cache == cache  # пересборка плана находит кандидатов после перезапуска
+        assert "cache" not in loaded.model_dump(mode="json")  # в UI кеш не уходит
 
     on_db(scenario)
 

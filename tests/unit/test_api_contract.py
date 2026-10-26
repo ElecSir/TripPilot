@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from tests.fakes import FakeSources, fake_sources, sample_package
 from trip_pilot.agent.events import DoneEvent, StepEvent, parse_event
 from trip_pilot.api.main import create_app
-from trip_pilot.domain.trip_state import TripState
+from trip_pilot.domain.trip_state import SearchCache, TripState
 
 SESSION = "6f1c1a52-6c4e-4a43-9a51-2a8a3c9f1a10"
 
@@ -90,6 +90,22 @@ def test_trip_is_returned_as_plan_json():
     plan = resp.json()
     assert [p["id"] for p in plan["packages"]] == ["p1", "p2"]
     assert plan["packages"][0]["total"] == str(sample_package("p1").total)  # деньги — строкой
+
+
+def test_trip_json_has_no_search_cache():
+    src = fake_sources()
+    package = sample_package("p1")
+    cache = SearchCache(
+        origin="moscow", destination="antalya", check_in=package.check_in,
+        check_out=package.check_out, travellers=2, hotels=[package.hotel],
+    )
+    state = TripState(session_id=uuid.UUID(SESSION), packages=[package], cache=cache)
+    asyncio.run(src.trips.save(state))
+    with client() as c:
+        c.app.state.trips = src.trips
+        plan = c.get(f"/api/trips/{SESSION}").json()
+    assert "cache" not in plan  # служебная память агента в UI не уходит
+    assert plan["packages"][0]["id"] == "p1"
 
 
 def test_order_is_created_and_repeat_is_idempotent():

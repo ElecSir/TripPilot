@@ -23,12 +23,12 @@ from trip_pilot.agent.events import (
     StageEvent,
     StepEvent,
 )
-from trip_pilot.agent.orchestrator import AgentDeps, MvpOrchestrator
+from trip_pilot.agent.orchestrator import AgentDeps, MvpOrchestrator, places_of
 from trip_pilot.agent.toolkit import Toolkit
 from trip_pilot.domain.errors import BudgetTooLow, NoResults, UnknownCity
 from trip_pilot.domain.offers import Package
 from trip_pilot.domain.request import Party, TripRequest
-from trip_pilot.domain.trip_state import Order, PendingQuestion
+from trip_pilot.domain.trip_state import Order, PendingQuestion, TripState
 
 TODAY = date(2026, 10, 24)  # суббота; ближайшая подходящая суббота ноября — 7-е
 CITIES = {"москв": "moscow", "сочи": "sochi", "анталь": "antalya"}
@@ -199,6 +199,7 @@ def test_button_answers_lead_to_plan():
     events = d.say("Москва")  # кнопка на вопрос «откуда»
     assert stages(events)[-1] == "inspire"
     assert of(events, QuestionEvent)[0].options == ["Сочи", "Анталья"]
+    assert of(events, PlanEvent)[0].data["places"] == {"moscow": "Москва"}
 
     events = d.say("Анталья")  # кнопка на вопрос «куда»
     assert stages(events)[-2:] == ["search", "compare"]
@@ -213,6 +214,8 @@ def test_full_request_gives_plan_and_keeps_user_intent():
 
     [plan] = of(events, PlanEvent)
     assert [p["tier"] for p in plan.data["packages"]] == ["economy", "balance", "comfort"]
+    # Названия всех мест плана: UI показывает их вместо slug из рейсов и запроса.
+    assert plan.data["places"] == {"antalya": "Анталья", "moscow": "Москва"}
     state = d.state
     assert state.search.check_in == date(2026, 11, 7)
     assert state.search.check_out == date(2026, 11, 14)
@@ -295,6 +298,7 @@ def test_select_package():
 
     events = d.press("p2")
     assert stages(events) == ["checkout"]
+    assert of(events, PlanEvent)[0].data["places"]["antalya"] == "Анталья"
     assert "Выбран пакет «Баланс»" in reply(events)
     assert d.state.selected_package_id == "p2"
 
@@ -314,6 +318,13 @@ def test_after_order_agent_does_not_replan():
     events = d.say("а в декабре?")
     assert "Заказ TP-2026-000001 уже оформлен" in reply(events)
     assert d.state.search.check_in == date(2026, 11, 7)
+
+
+def test_places_keep_unknown_slug_as_is():
+    state = TripState(
+        session_id=uuid.uuid4(), request=TripRequest(origin="moscow", destination="atlantis")
+    )
+    assert places_of(state, {"moscow": "Москва"}) == {"atlantis": "atlantis", "moscow": "Москва"}
 
 
 # --- Даты ------------------------------------------------------------------------------------

@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, Field
 
-from trip_pilot.domain.offers import Package
+from trip_pilot.domain.offers import Hotel, Leg, Package, Transfer
 from trip_pilot.domain.request import Assumption, TripRequest
 
 # О чём агент спросил. По slot ответ разбирается без угадывания: «2–6» — это возраст ребёнка.
@@ -35,6 +35,24 @@ class SearchWindow(BaseModel):
     assumptions: list[Assumption] = []
 
 
+class SearchCache(BaseModel):
+    """Кандидаты последнего поиска — служебная память агента, в UI не уходит.
+
+    Когда пользователь меняет условия, план пересобирается из них, а заново ищется только то,
+    что от изменения зависит: «бюджет меньше» не требует нового поиска, «на 2 дня позже» — да.
+    """
+
+    origin: str
+    destination: str
+    check_in: date
+    check_out: date
+    travellers: int  # от числа путешественников зависят цены и вместимость трансфера
+    outbound: list[Leg] = []
+    inbound: list[Leg] = []
+    hotels: list[Hotel] = []
+    transfers_by_hotel: dict[int, list[Transfer]] = {}
+
+
 class Order(BaseModel):
     id: str  # TP-<год>-<6 цифр>
     package_id: str
@@ -55,6 +73,9 @@ class TripState(BaseModel):
     pending_question: PendingQuestion | None = None
     selected_package_id: str | None = None
     order: Order | None = None
+    # Не попадает в model_dump: ни в событие plan, ни в GET /api/trips. Хранилище плана
+    # сохраняет кеш явно (см. SqlTripStateRepository), а model_validate читает его как обычно.
+    cache: SearchCache | None = Field(default=None, exclude=True)
 
     def package(self, package_id: str) -> Package | None:
         return next((p for p in self.packages if p.id == package_id), None)

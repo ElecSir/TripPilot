@@ -4,6 +4,10 @@ MvpOrchestrator — линейный сценарий: каждое сообще
 чего не хватает. Ход: загрузить план → обработать → сохранить → done. Собирается
 с настоящими адаптерами и функциями зон в api/main.py.
 
+Изменение условий не начинает поиск с нуля: заново ищется только то, что от изменения зависит
+(agent/replanner.py), остальное берётся из кеша прошлого поиска, а человеку показывается,
+что поменялось.
+
 Этап 1: если LLM доступна, сообщение сначала понимает `understand`, а объяснения дописывает
 `narrate`. Любой сбой LLM (`LLMUnavailable`) — тот же ход на правилах и шаблонах, как в MVP.
 """
@@ -31,12 +35,13 @@ from trip_pilot.agent.events import (
     StageEvent,
     StepEvent,
 )
+from trip_pilot.agent.replanner import describe_changes, reused_step, search_needs
 from trip_pilot.agent.toolkit import Toolkit
 from trip_pilot.domain.errors import DomainError, NoResults
 from trip_pilot.domain.knowledge import KnowledgeHit
 from trip_pilot.domain.offers import Destination, Package
 from trip_pilot.domain.request import TripRequest
-from trip_pilot.domain.trip_state import PendingQuestion, TripState
+from trip_pilot.domain.trip_state import PendingQuestion, SearchCache, TripState
 from trip_pilot.ports import (
     LLM,
     ChatMessages,
@@ -65,6 +70,34 @@ class NoLLM:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         raise LLMUnavailable("LLM не подключена")
+
+
+class AnsweredLLM:
+    """Обёртка LLM, которая помнит, ответила ли модель хоть раз.
+
+    По ней оркестратор пишет шаг «с помощью ИИ» только по факту, а не потому, что ключ задан:
+    функция data может вернуть результат правил, не позвав модель.
+    """
+
+    def __init__(self, llm: LLM) -> None:
+        self._llm = llm
+        self.enabled = llm.enabled
+        self.answered = False
+
+    async def complete(self, messages: ChatMessages) -> str:
+        reply = await self._llm.complete(messages)
+        self.answered = True
+        return reply
+
+    async def structured[T: BaseModel](self, messages: ChatMessages, schema: type[T]) -> T:
+        reply = await self._llm.structured(messages, schema)
+        self.answered = True
+        return reply
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        vectors = await self._llm.embed(texts)
+        self.answered = True
+        return vectors
 
 
 def places_of(state: TripState, names: dict[str, str]) -> dict[str, str]:
@@ -114,9 +147,12 @@ class MvpOrchestrator:
 
         # 1. Обновить запрос. С LLM — понимание моделью; без неё или при сбое — правила:
         #    ответ на вопрос → изменение плана → новое сообщение.
+        #    Шаг «с помощью ИИ» — только если модель действительно ответила.
         if self._uses_llm(self._tk.understand):
-            yield StepEvent(text="Разбираю запрос с помощью ИИ")
-        updated = await self._understand(state, text, catalog, today)
+            yield StepEvent(text="Разбираю запрос")
+        updated, by_ai = await self._understand(state, text, catalog, today)
+        if by_ai:
+            yield StepEvent(text="Запрос разобран с помощью ИИ")
         if updated is None:
             updated = self._update_request(state, text, catalog, today)
         match updated:
@@ -149,29 +185,61 @@ class MvpOrchestrator:
                 yield event
             return
 
-        # 3. Поиск: всё, что не зависит друг от друга, — параллельно.
+        # 3. Поиск. При изменении условий заново ищется только то, что от них зависит
+        #    (agent/replanner.py), остальное берётся из кеша прошлого поиска. Независимое —
+        #    параллельно.
         yield StageEvent(stage="search")
         origin, dest, party = request.origin, request.destination, request.party
-        for step in texts.search_steps(names.get(origin, origin), names.get(dest, dest), window):
-            yield StepEvent(text=step)
-        (outbound, inbound, hotels), failed = await self._gather({
-            "перелёты туда": self._deps.transport.search(origin, dest, window.check_in, party),
-            "перелёты обратно": self._deps.transport.search(dest, origin, window.check_out, party),
-            "отели": self._deps.hotels.search(dest, window.check_in, window.check_out, party),
-        })
+        cache = state.cache
+        needs = search_needs(cache, request, window)
+        if (reused := reused_step(needs)) is not None:
+            yield StepEvent(text=reused)
+        steps = texts.search_steps(names.get(origin, origin), names.get(dest, dest), window)
+        searches: dict[str, Awaitable[list[Any]]] = {}
+        if needs.outbound:
+            searches["перелёты туда"] = self._deps.transport.search(
+                origin, dest, window.check_in, party
+            )
+        if needs.inbound:
+            searches["перелёты обратно"] = self._deps.transport.search(
+                dest, origin, window.check_out, party
+            )
+        if needs.hotels:
+            searches["отели"] = self._deps.hotels.search(
+                dest, window.check_in, window.check_out, party
+            )
+        for needed, step in zip((needs.outbound, needs.inbound, needs.hotels), steps, strict=True):
+            if needed:
+                yield StepEvent(text=step)
+        found, failed = await self._gather(searches)
         for name in failed:
             yield StepEvent(text=texts.source_failed(name))
+        fresh = dict(zip(searches, found, strict=True))
+        # Что не искали заново, есть в кеше: без кеша search_needs требует искать всё.
+        outbound = fresh["перелёты туда"] if needs.outbound else cache.outbound
+        inbound = fresh["перелёты обратно"] if needs.inbound else cache.inbound
+        hotels = fresh["отели"] if needs.hotels else cache.hotels
 
-        transfers_by_hotel = {}
-        if outbound and hotels:
-            arrive_at = min(leg.arrive_at for leg in outbound)
-            yield StepEvent(text=f"Ищу трансферы до {len(hotels)} отелей")
-            found, failed = await self._gather({
-                str(h.id): self._deps.transfers.search(h.id, arrive_at, party) for h in hotels
-            })
-            transfers_by_hotel = {h.id: t for h, t in zip(hotels, found, strict=True)}
-            if failed:
-                yield StepEvent(text=texts.source_failed("трансферы"))
+        if needs.transfers:
+            transfers_by_hotel = {}
+            if outbound and hotels:
+                arrive_at = min(leg.arrive_at for leg in outbound)
+                yield StepEvent(text=f"Ищу трансферы до {len(hotels)} отелей")
+                found, transfers_failed = await self._gather({
+                    str(h.id): self._deps.transfers.search(h.id, arrive_at, party) for h in hotels
+                })
+                transfers_by_hotel = {h.id: t for h, t in zip(hotels, found, strict=True)}
+                if transfers_failed:
+                    failed.append("трансферы")
+                    yield StepEvent(text=texts.source_failed("трансферы"))
+        else:
+            transfers_by_hotel = cache.transfers_by_hotel
+        # Упавший источник дал пустой список: такой поиск не кешируем, в следующий раз — заново.
+        new_cache = None if failed else SearchCache(
+            origin=origin, destination=dest, check_in=window.check_in,
+            check_out=window.check_out, travellers=party.travellers, outbound=outbound,
+            inbound=inbound, hotels=hotels, transfers_by_hotel=transfers_by_hotel,
+        )
 
         # 4. Пакеты: сборка, проверки и объяснения — функции data.
         yield StepEvent(text="Собираю пакеты и проверяю стыковки")
@@ -181,8 +249,11 @@ class MvpOrchestrator:
         built = self._tk.simple_packages(
             search_request, outbound, inbound, hotels, transfers_by_hotel
         )
+        previous, previous_window = state.packages, state.search
         state = state.model_copy(
-            update={"search": window, "packages": [], "selected_package_id": None}
+            update={
+                "search": window, "packages": [], "selected_package_id": None, "cache": new_cache,
+            }
         )
         match built:
             case Failure(error):
@@ -198,14 +269,15 @@ class MvpOrchestrator:
             )
             for p in packages
         ]
-        if self._uses_llm(self._tk.narrate):
-            yield StepEvent(text="Объясняю варианты с помощью ИИ")
-        packages = await self._narrate(packages, search_request)
+        packages, by_ai = await self._narrate(packages, search_request)
+        if by_ai:
+            yield StepEvent(text="Объяснения написаны с помощью ИИ")
         state = state.model_copy(update={"packages": packages})
         yield StageEvent(stage="compare")
+        changed = describe_changes(previous, packages, previous_window, window) if previous else []
         summary = texts.plan_summary(
             names.get(origin, origin), names.get(dest, dest), window, packages
-        )
+        ) + texts.changes(changed)
         for event in await self._close(state, summary, stage="compare"):
             yield event
 
@@ -239,28 +311,33 @@ class MvpOrchestrator:
 
     async def _understand(
         self, state: TripState, text: str, catalog: list[Destination], today: date
-    ) -> Result[TripRequest, DomainError] | None:
-        """Понимание моделью. None — разбирать правилами: LLM нет, она упала или не справилась."""
+    ) -> tuple[Result[TripRequest, DomainError] | None, bool]:
+        """Понимание моделью и «ответила ли модель». None — разбирать правилами."""
         understand = self._tk.understand
         if understand is None or not self._deps.llm.enabled:
-            return None
+            return None, False
+        llm = AnsweredLLM(self._deps.llm)
         try:
-            return await understand(text, state, catalog=catalog, today=today, llm=self._deps.llm)
+            result = await understand(text, state, catalog=catalog, today=today, llm=llm)
         except LLMUnavailable as error:
             log.warning("LLM недоступна, разбираю запрос правилами: %s", error)
-            return None
+            return None, False
+        return result, result is not None and llm.answered
 
-    async def _narrate(self, packages: list[Package], request: TripRequest) -> list[Package]:
-        """Объяснения всех пакетов разом. Вызывается и без LLM: сравнения соседей — шаблоном."""
+    async def _narrate(
+        self, packages: list[Package], request: TripRequest
+    ) -> tuple[list[Package], bool]:
+        """Объяснения всех пакетов разом и «ответила ли модель». Без LLM — тоже: сравнения."""
         narrate = self._tk.narrate
         if narrate is None:
-            return packages
+            return packages, False
         knowledge = await self._knowledge(request)
+        llm = AnsweredLLM(self._deps.llm)
         try:
-            return await narrate(packages, request, knowledge=knowledge, llm=self._deps.llm)
+            return await narrate(packages, request, knowledge=knowledge, llm=llm), llm.answered
         except LLMUnavailable as error:
             log.warning("LLM недоступна, оставляю шаблонные объяснения: %s", error)
-            return packages
+            return packages, False
 
     async def _knowledge(self, request: TripRequest) -> list[KnowledgeHit]:
         """Фрагменты базы знаний. Как упавший источник: без них объяснения беднее, но ход идёт."""

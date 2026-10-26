@@ -5,8 +5,13 @@
 #   Git Bash, Linux, macOS:  sh scripts/ci.sh
 #   PowerShell:              & "C:\Program Files\Git\bin\sh.exe" scripts/ci.sh
 #
-# Стек после проверки остаётся запущенным; остановить: docker compose down
+# Стек после проверки остаётся запущенным (без LLM); остановить: docker compose down,
+# вернуть ключ из .env: docker compose up -d
 set -eu
+
+# CI не зависит от ключа LLM: проверяем режим без модели, как у жюри и в GitHub Actions.
+# Пустая переменная окружения перебивает ключ из .env (LLM_API_KEY в docker-compose.yml).
+export LLM_API_KEY=
 
 step() {
     printf '\n== %s ==\n' "$1"
@@ -61,3 +66,4 @@ step "Интеграционные тесты на Postgres и e2e через ш
 docker compose --profile tests run --rm -T --build tests
 
 printf '\n== Все шаги CI прошли ==\n'
+echo "Стек запущен без LLM. Вернуть ключ из .env: docker compose up -d"

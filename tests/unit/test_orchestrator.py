@@ -139,11 +139,13 @@ TOOLKIT = Toolkit(
 # --- Обвязка ---------------------------------------------------------------------------------
 
 class Dialog:
-    def __init__(self, hotels=None, *, toolkit=TOOLKIT, llm=None, knowledge=None):
+    def __init__(
+        self, hotels=None, *, transport=None, toolkit=TOOLKIT, llm=None, knowledge=None
+    ):
         self.src = fake_sources()
         deps = AgentDeps(
             catalog=self.src.catalog, hotels=hotels or self.src.hotels,
-            transport=self.src.transport, transfers=self.src.transfers,
+            transport=transport or self.src.transport, transfers=self.src.transfers,
             trips=self.src.trips, toolkit=toolkit, llm=llm or NoLLM(),
             knowledge=knowledge or self.src.knowledge,
         )
@@ -295,6 +297,7 @@ def test_failed_source_is_reported_not_crashed():
     assert "Источник «отели» не ответил, продолжаю без него" in steps
     assert "ничего не нашлось" in reply(events)
     assert isinstance(events[-1], DoneEvent)
+    assert d.state.cache is None  # неполный поиск не кешируем: в следующий раз — заново
 
 
 def test_select_package():
@@ -342,11 +345,12 @@ def steps(events):
 
 
 def understand_as(request):
-    """understand, который «понял» любое сообщение как готовый запрос, и список вызовов."""
+    """understand, который спросил модель и «понял» сообщение как готовый запрос."""
     calls = []
 
     async def understand(text, state, *, catalog, today, llm):
         calls.append(text)
+        await llm.complete([{"role": "user", "content": text}])
         return Success(request)
 
     return understand, calls
@@ -362,13 +366,24 @@ def test_no_llm_behaves_like_adapter_without_key():
 
 def test_llm_understanding_goes_first():
     understand, calls = understand_as(TripRequest(origin="moscow", destination="sochi", month=11))
-    d = Dialog(toolkit=replace(TOOLKIT, understand=understand), llm=FakeLLM([]))
+    d = Dialog(toolkit=replace(TOOLKIT, understand=understand), llm=FakeLLM(["{}"]))
     events = d.say("хочу к морю, но поближе")  # правила такое не поймут
 
     assert calls == ["хочу к морю, но поближе"]
-    assert "Разбираю запрос с помощью ИИ" in steps(events)
+    assert steps(events)[:2] == ["Разбираю запрос", "Запрос разобран с помощью ИИ"]
     assert d.state.request.destination == "sochi"
     assert len(d.state.packages) == 3
+
+
+def test_ai_step_only_when_model_really_answered():
+    async def rules_inside(text, state, *, catalog, today, llm):
+        return Success(TripRequest(origin="moscow", destination="sochi", month=11))
+
+    d = Dialog(toolkit=replace(TOOLKIT, understand=rules_inside), llm=FakeLLM([]))
+    events = d.say(REQUEST)
+
+    assert d.state.request.destination == "sochi"  # результат принят,
+    assert not [s for s in steps(events) if "с помощью ИИ" in s]  # но модель не отвечала
 
 
 def test_without_key_understanding_is_not_called():
@@ -377,7 +392,7 @@ def test_without_key_understanding_is_not_called():
     events = d.say(REQUEST)
 
     assert calls == []
-    assert "Разбираю запрос с помощью ИИ" not in steps(events)
+    assert "Разбираю запрос" not in steps(events)  # без ключа ход такой же, как в MVP
     assert d.state.request.destination == "antalya"  # разобрали правила
 
 
@@ -418,8 +433,17 @@ def test_narrate_failure_keeps_template_explanations():
     d = Dialog(toolkit=replace(TOOLKIT, narrate=narrate), llm=FakeLLM([]))
     events = d.say(REQUEST)
 
-    assert "Объясняю варианты с помощью ИИ" in steps(events)
+    assert "Объяснения написаны с помощью ИИ" not in steps(events)
     assert d.state.packages[0].why == ["3★ Лара Сан"]  # шаблон explain
+
+
+def test_narrate_with_model_answer_reports_ai_step():
+    async def narrate(packages, request, *, knowledge, llm):
+        await llm.complete([{"role": "user", "content": "объясни"}])
+        return packages
+
+    d = Dialog(toolkit=replace(TOOLKIT, narrate=narrate), llm=FakeLLM(["текст"]))
+    assert "Объяснения написаны с помощью ИИ" in steps(d.say(REQUEST))
 
 
 def test_broken_knowledge_base_does_not_break_plan():
@@ -452,6 +476,57 @@ def test_next_question_gets_today():
 
     Dialog(toolkit=replace(TOOLKIT, next_question=spy)).say(REQUEST)
     assert seen == [TODAY]
+
+
+# --- Пересборка плана ------------------------------------------------------------------------
+
+class Counting:
+    """Источник-обёртка: запоминает каждый вызов search."""
+
+    def __init__(self, source):
+        self._source, self.calls = source, []
+
+    async def search(self, *args, **kwargs):
+        self.calls.append(args)
+        return await self._source.search(*args, **kwargs)
+
+
+def counted_dialog():
+    src = fake_sources()
+    hotels, transport = Counting(src.hotels), Counting(src.transport)
+    return Dialog(hotels=hotels, transport=transport), hotels, transport
+
+
+def test_budget_change_rebuilds_plan_without_new_search():
+    d, hotels, transport = counted_dialog()
+    d.say(REQUEST)
+    assert (len(transport.calls), len(hotels.calls)) == (2, 1)
+
+    events = d.say("а если бюджет до 200 000?")
+
+    assert (len(transport.calls), len(hotels.calls)) == (2, 1)  # ничего не искали заново
+    assert "Маршрут, даты и состав те же" in steps(events)[0]
+    assert d.state.request.budget == Decimal("200000")
+    assert "Что поменялось:\n\n- «Эконом»: цена та же" in reply(events)
+
+
+def test_date_shift_searches_only_what_depends_on_dates():
+    d, hotels, transport = counted_dialog()
+    d.say(REQUEST)
+    events = d.say("а если на 2 дня позже?")
+
+    assert (len(transport.calls), len(hotels.calls)) == (4, 2)  # рейсы и отели — на новые даты
+    assert "- даты: 7–14 ноября → 9–16 ноября" in reply(events)
+    assert d.state.cache.check_in == date(2026, 11, 9)
+
+
+def test_search_cache_stays_out_of_plan_event():
+    d = Dialog()
+    [plan] = of(d.say(REQUEST), PlanEvent)
+
+    assert "cache" not in plan.data
+    assert d.state.cache.destination == "antalya"
+    assert d.state.cache.travellers == 2
 
 
 # --- Даты ------------------------------------------------------------------------------------

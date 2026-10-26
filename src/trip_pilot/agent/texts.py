@@ -121,6 +121,13 @@ def plan_summary(
     )
 
 
+def changes(lines: list[str]) -> str:
+    """Что поменялось после пересборки плана — дописывается к резюме списком markdown."""
+    if not lines:
+        return ""
+    return "\n\nЧто поменялось:\n\n" + "\n".join(f"- {line}" for line in lines)
+
+
 def nothing_changed() -> str:
     return "План выше. Выберите пакет или напишите, что поменять: даты, бюджет, состав."
 

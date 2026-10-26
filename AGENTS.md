@@ -38,14 +38,14 @@ src/trip_pilot/
 
 - Ядро работает через порты из `ports.py`; конкретные реализации подставляются в `api/main.py`.
 - Деньги хранятся в `Decimal` (в БД `NUMERIC(12,2)`), не `float`. Время — `datetime` с часовым поясом (в БД `timestamptz`), часовые пояса в формате IANA (`Europe/Moscow`), в коде `zoneinfo`.
-- Ожидаемые ошибки (неверный ввод, ничего не найдено, бюджет мал) возвращаются как `Result` библиотеки `returns` (`Success` / `Failure`) с типами из `domain/errors.py`. Инфраструктурные сбои (БД недоступна, таймаут LLM) — обычные исключения.
+- Ожидаемые ошибки (неверный ввод, ничего не найдено, бюджет мал) возвращаются как `Result` библиотеки `returns` (`Success` / `Failure`) с типами из `domain/errors.py`. Инфраструктурные сбои (БД недоступна) — обычные исключения. Сбои LLM — отдельное правило ниже.
 - Схема БД меняется только миграциями Alembic (команды в README). Руками в pgAdmin её не правят.
 - ORM-модели каждой зоны лежат в своём модуле `adapters/db/` (см. задание). Чужие модули не трогай.
 - Зависимости добавляются только через `pyproject.toml` + `make lock` (обновляет `uv.lock`). Не используй `pip install`. Новую зависимость сначала согласуй с лидом: `uv.lock` общий для всех.
 - Логи пиши через `logging` (в stdout), не через `print`.
 - Стиль кода проверяет `ruff` (строка до 100 символов). Комментарии и docstring пиши на русском, коротко и по делу.
 - Код пиши вместе с тестами (`tests/unit/...`). Внешний мир в тестах подменяется фейками: `from tests.fakes import fake_sources`.
-- Нет ключа LLM — методы порта `LLM` бросают `ports.LLMUnavailable`; ядро ловит его и работает без LLM.
+- **Любой сбой LLM — `ports.LLMUnavailable`**: нет ключа, сеть или таймаут после повторов, 401/403, 429/5xx после повторов, ответ не прошёл схему после повтора. Ядро ловит только его и продолжает на правилах и шаблонах: у жюри нашего ключа не будет, поэтому режим без LLM должен работать всегда.
 - Синтетические данные и сгенерированные тексты помечаются (`is_synthetic`, `source: synthetic`).
 - Секреты хранятся только в `.env`. Никогда не пиши их в код, логи, тесты и коммиты.
 
@@ -64,8 +64,8 @@ src/trip_pilot/
 |---|---|---|---|
 | лид | `team/lead` | `tasks/lead.md` | `docker/`, `.github/`, `api/`, `domain/`, `ports.py`, `config.py`, `cli.py`, `logs.py`, `agent/events.py`, `agent/actions.py`, `agent/toolkit.py`, `agent/orchestrator.py`, `agent/dates.py`, `agent/texts.py`, `agent/replanner.py`, `services/booking.py`, `services/post_purchase.py`, `adapters/db/{base,chat,orders,models,engine,repositories}.py`, `migrations/env.py`, `tests/fakes.py`, `AGENTS.md`, `README.md`, `docs/`, `tasks/` |
 | rag | `team/rag` | `tasks/rag.md` | `rag/`, `data/knowledge/`, `adapters/llm/`, `adapters/db/knowledge.py`, `services/memory.py`, `evals/` |
-| data | `team/data` | `tasks/data.md` | `seed/`, `data/reference/`, `adapters/sources/`, `adapters/db/{reference,inventory}.py`, `planning/` |
-| ui | `team/ui` | `tasks/ui.md` | `ui/`, `.streamlit/`, `agent/intent.py`, `agent/clarifier.py`, `agent/prompts/`, `services/explanation.py` |
+| data | `team/data` | `tasks/data.md` | `seed/`, `data/reference/`, `adapters/sources/`, `adapters/db/{reference,inventory}.py`, `planning/`; понимание запроса и объяснения (с этапа 1, от ui): `agent/intent.py`, `agent/clarifier.py`, `agent/understand.py`, `agent/prompts/`, `services/explanation.py`, `evals/cases/parse.yaml` |
+| ui | `team/ui` | `tasks/ui.md` | `ui/`, `.streamlit/` |
 
 **Контракты** (`domain/`, `ports.py`, `agent/events.py`, `agent/actions.py`, `agent/toolkit.py` — сигнатуры функций ui и data, которые вызывает оркестратор, формат события `plan`, маршруты API, `tests/fakes.py`) меняет только лид. Свою функцию из `agent/toolkit.py` реализуй строго с этой сигнатурой: оркестратор вызывает её именно так. Нужна правка контракта или файла чужой зоны — **остановись** и опиши человеку, что и зачем нужно изменить. Не правь сам.
 

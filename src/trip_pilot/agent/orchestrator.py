@@ -57,7 +57,7 @@ def places_of(state: TripState, names: dict[str, str]) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class AgentDeps:
-    """Всё, что нужно оркестратору: порты (данные, хранилище плана) и функции зон ui и data."""
+    """Всё, что нужно оркестратору: порты (данные, хранилище плана) и функции зоны data."""
 
     catalog: DestinationCatalog
     hotels: HotelSource

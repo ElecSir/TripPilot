@@ -1,8 +1,8 @@
-"""Функции зон ui и data, которые вызывает оркестратор. Контракт лида.
+"""Функции зоны data, которые вызывает оркестратор. Контракт лида.
 
-Здесь только сигнатуры. Реализации пишут ui (agent/intent.py, agent/clarifier.py,
-services/explanation.py) и data (planning/). Все функции чистые и синхронные: без IO,
-«сегодня» передаётся параметром.
+Здесь только сигнатуры. Реализации пишет data: понимание запроса и объяснения (agent/intent.py,
+agent/clarifier.py, services/explanation.py; до этапа 1 их вела ui) и подбор (planning/).
+Все функции чистые и синхронные: без IO, «сегодня» передаётся параметром.
 """
 
 from dataclasses import dataclass
@@ -18,7 +18,7 @@ from trip_pilot.domain.trip_state import PendingQuestion
 
 
 class ParseRequest(Protocol):
-    """ui, agent/intent.py: текст → запрос. `base` — уже собранный запрос, новое его дополняет."""
+    """data, agent/intent.py: текст → запрос. `base` — уже собранный запрос, новое его дополняет."""
 
     def __call__(
         self,
@@ -31,7 +31,7 @@ class ParseRequest(Protocol):
 
 
 class ParseChange(Protocol):
-    """ui, agent/intent.py: «на 2 дня позже» → патч полей запроса или None, если это не изменение.
+    """data, agent/intent.py: «на 2 дня позже» → патч полей запроса или None, если это не изменение.
 
     `current` приходит с конкретными датами последнего поиска (`date_from`, `nights`),
     поэтому сдвиг считается от них.
@@ -43,7 +43,7 @@ class ParseChange(Protocol):
 
 
 class NextQuestion(Protocol):
-    """ui, agent/clarifier.py: какого обязательного не хватает (origin, when, children_ages)."""
+    """data, agent/clarifier.py: какого обязательного не хватает (origin, when, children_ages)."""
 
     def __call__(
         self, request: TripRequest, catalog: list[Destination]
@@ -51,7 +51,7 @@ class NextQuestion(Protocol):
 
 
 class ApplyAnswer(Protocol):
-    """ui, agent/clarifier.py: ответ на заданный вопрос → дополненный запрос.
+    """data, agent/clarifier.py: ответ на заданный вопрос → дополненный запрос.
 
     None — текст не похож на ответ (пользователь написал что-то своё), тогда оркестратор
     разбирает его как обычное сообщение. Отвечает на все slot, включая destination.
@@ -98,7 +98,7 @@ class CheckPackage(Protocol):
 
 
 class Explain(Protocol):
-    """ui, services/explanation.py: заполняет why, tradeoffs и risks пакета."""
+    """data, services/explanation.py: заполняет why, tradeoffs и risks пакета."""
 
     def __call__(self, package: Package, request: TripRequest) -> Package: ...
 

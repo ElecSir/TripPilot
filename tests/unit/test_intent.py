@@ -37,9 +37,13 @@ PHRASES = [
     ("в октябре", {"month": 10}),
     ("на майские", {"month": 5, "date_from": None}),
     ("с 5 по 12 декабря", {"date_from": date(2026, 12, 5), "nights": 7}),
+    ("с 5 до 12 декабря", {"date_from": date(2026, 12, 5), "nights": 7}),
     ("с 28 декабря по 4 января", {"date_from": date(2026, 12, 28), "nights": 7}),
     ("с 5 по 12 декабря 2027", {"date_from": date(2027, 12, 5), "nights": 7}),
     ("5 ноября", {"date_from": date(2026, 11, 5)}),
+    # Прошедшая дата без года → следующий год (сегодня 2026-10-25)
+    ("15 марта", {"date_from": date(2027, 3, 15)}),
+    ("с 3 по 10 января", {"date_from": date(2027, 1, 3), "nights": 7}),
     ("2026-11-14", {"date_from": date(2026, 11, 14)}),
     ("14.11.2026", {"date_from": date(2026, 11, 14)}),
     ("через две недели", {"date_from": date(2026, 11, 8)}),
@@ -49,6 +53,8 @@ PHRASES = [
     ("на выходные", {"nights": 2}),
     ("на 10 дней", {"nights": 10}),
     ("на 3 ночи", {"nights": 3}),
+    ("на две недели", {"nights": 14}),
+    ("на пять дней", {"nights": 5}),
     ("из Москвы", {"origin": "moscow"}),
     ("из Питера", {"origin": "spb"}),
     ("из СПб", {"origin": "spb"}),
@@ -119,6 +125,24 @@ def test_past_dates_return_domain_error(text):
     assert isinstance(result.failure(), DatesInPast)
 
 
+def test_past_date_without_year_rolls_to_next_year():
+    """«15 марта» и «15.03» в октябре → март следующего года, а не DatesInPast."""
+    for text in ("15 марта", "15.03"):
+        result = parse_request(text, catalog=CATALOG, today=TODAY)
+        assert isinstance(result, Success), result
+        assert result.unwrap().date_from == date(2027, 3, 15)
+
+
+def test_range_with_do_is_not_budget():
+    """«с 5 до 12 декабря» — диапазон дат, а не бюджет 12 ₽."""
+    result = parse_request("с 5 до 12 декабря", catalog=CATALOG, today=TODAY)
+    assert isinstance(result, Success), result
+    request = result.unwrap()
+    assert request.date_from == date(2026, 12, 5)
+    assert request.nights == 7
+    assert request.budget is None
+
+
 @pytest.mark.parametrize("text", ["31 ноября", "на 0 ночей", "на 31 день", "бюджет 0"])
 def test_invalid_input_returns_failure_instead_of_exception(text):
     result = parse_request(text, catalog=CATALOG, today=TODAY)
@@ -170,11 +194,17 @@ def test_default_party_and_qualitative_budget_are_transparent():
     [
         ("на два дня позже", {"date_from": date(2026, 11, 9)}),
         ("на 3 дня раньше", {"date_from": date(2026, 11, 4)}),
+        # «на один день позже» — сдвиг даты, взрослые не меняются
+        ("на один день позже", {"date_from": date(2026, 11, 8), "party.adults": 3}),
         ("бюджет меньше", {"budget": Decimal("120000.00")}),
+        ("подешевле", {"budget": Decimal("120000.00")}),
+        ("дешевле", {"budget": Decimal("120000.00")}),
         ("до 100к", {"budget": Decimal("100000")}),
         ("без пересадок", {"must": ["kids_friendly", "direct_only"]}),
         ("с нами едет собака", {"party": Party(adults=3, children_ages=[5], pets=["dog"])}),
         ("а в декабре?", {"month": 12, "date_from": None}),
+        ("на две недели", {"nights": 14}),
+        ("на пять дней", {"nights": 5}),
     ],
 )
 def test_change_patch_uses_current_values(text, expected):
@@ -192,7 +222,7 @@ def test_change_patch_uses_current_values(text, expected):
     for path, value in expected.items():
         assert field_value(updated, path) == value
     assert current.model_dump() == before
-    if text == "бюджет меньше":
+    if text in ("бюджет меньше", "подешевле", "дешевле"):
         assert any(item.field == "budget" and item.reason for item in updated.assumptions)
 
 

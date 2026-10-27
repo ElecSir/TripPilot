@@ -101,6 +101,9 @@ def test_unknown_city_is_failure_and_new_request_is_not_consumed(slot):
         ("Ноябрь", 11, None),
         ("в декабре", 12, None),
         ("5 ноября", None, date(2026, 11, 5)),
+        # Прошедшая дата без года → следующий год, как в parse_when (сегодня 2026-10-25)
+        ("15 марта", None, date(2027, 3, 15)),
+        ("с 3 по 10 января", None, date(2027, 1, 3)),
         ("2026-11-07", None, date(2026, 11, 7)),
         ("через две недели", None, date(2026, 11, 8)),
     ],

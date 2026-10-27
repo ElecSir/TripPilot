@@ -272,32 +272,49 @@ def _number(raw: str) -> int:
     return int(raw) if raw.isdigit() else _NUMBERS[raw]
 
 
+def _future_date(day: int, month: int, year: int | None, today: date) -> date:
+    """Дата без года, уже прошедшая в текущем году, переносится на следующий."""
+    y = year if year is not None else today.year
+    candidate = date(y, month, day)
+    if year is None and candidate < today:
+        candidate = date(y + 1, month, day)
+    return candidate
+
+
 def parse_when(text: str, today: date) -> dict[str, Any] | None:
     """Разбирает названные даты; проверку прошлого выполняет вызывающая функция."""
     text = normalize(text)
     if match := re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text):
         return {"date_from": date.fromisoformat(match[1]), "month": None}
     if match := re.search(r"\b(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\b", text):
+        year = int(match[3]) if match[3] else None
         return {
-            "date_from": date(int(match[3] or today.year), int(match[2]), int(match[1])),
+            "date_from": _future_date(int(match[1]), int(match[2]), year, today),
             "month": None,
         }
+    # «с 5 по 12 декабря» и «с 5 до 12 декабря»; «до» не должно уходить в бюджет.
     range_pattern = (
-        rf"\bс\s+(\d{{1,2}})\s*({_MONTH_PATTERN})?\s*по\s+(\d{{1,2}})\s*"
+        rf"\bс\s+(\d{{1,2}})\s*({_MONTH_PATTERN})?\s*(?:по|до)\s+(\d{{1,2}})\s*"
         rf"({_MONTH_PATTERN})(?:\s+(\d{{4}}))?\b"
     )
     if match := re.search(range_pattern, text):
-        start_day, start_name, end_day, end_name, year = match.groups()
+        start_day, start_name, end_day, end_name, year_raw = match.groups()
         end_month = month_number(end_name)
         start_month = month_number(start_name) if start_name else end_month
-        start = date(int(year or today.year), start_month, int(start_day))
+        year = int(year_raw) if year_raw else None
+        start = _future_date(int(start_day), start_month, year, today)
         end_year = start.year + (end_month < start_month)
         end = date(end_year, end_month, int(end_day))
         return {"date_from": start, "month": None, "nights": (end - start).days}
     if match := re.search(rf"\b(\d{{1,2}})\s+({_MONTH_PATTERN})(?:\s+(\d{{4}}))?\b", text):
-        start = date(int(match[3] or today.year), month_number(match[2]), int(match[1]))
+        year = int(match[3]) if match[3] else None
+        start = _future_date(int(match[1]), month_number(match[2]), year, today)
         return {"date_from": start, "month": None}
-    if match := re.search(r"\bчерез\s+(\d+|одну|две|два|три)\s+(недел\w*|дн\w*|день)\b", text):
+    if match := re.search(
+        r"\bчерез\s+(\d+|один|одну|две|два|три|четыре|пять|семь|десять)\s+"
+        r"(недел\w*|дн\w*|день)\b",
+        text,
+    ):
         days = _number(match[1]) * (7 if match[2].startswith("недел") else 1)
         return {"date_from": today + timedelta(days=days), "month": None}
     for word, days in (("послезавтра", 2), ("завтра", 1)):
@@ -314,8 +331,13 @@ def parse_when(text: str, today: date) -> dict[str, Any] | None:
 def _duration(text: str) -> int | None:
     if re.search(r"\b(?:позже|раньше)\b", text):
         return None
-    if match := re.search(r"\bна\s+(\d+|одну|две|два|три|семь|десять)\s+(дн\w*|день|ноч\w*)", text):
-        return _number(match[1])
+    word_num = r"\d+|один|одну|одна|два|две|двух|три|трех|четыре|пять|семь|десять"
+    if match := re.search(
+        rf"\bна\s+({word_num})\s+(недел\w*|дн\w*|день|ноч\w*)", text
+    ):
+        unit = match[2]
+        n = _number(match[1])
+        return n * 7 if unit.startswith("недел") else n
     if re.search(r"\bна\s+неделю\b", text):
         return 7
     if re.search(r"\bна\s+выходные\b", text):
@@ -333,7 +355,10 @@ def _budget(text: str) -> Decimal | None:
         if not marker and not unit:
             continue
         tail = text[match.end() :].lstrip()
-        if tail.startswith(("лет", "год", "ноч", "дн", "день")):
+        # «до 12 декабря» / «до 2 лет» — не бюджет
+        if tail.startswith(("лет", "год", "ноч", "дн", "день")) or month_number(
+            tail.split()[0] if tail else ""
+        ):
             continue
         amount = Decimal(raw.replace(" ", "").replace("\u00a0", "").replace(",", "."))
         if unit and unit.startswith(("к", "k", "тыс")):
@@ -354,7 +379,8 @@ def _party(text: str, current: TripRequest) -> tuple[dict, list[str], set[str]]:
         for pattern, count in (
             (r"\bвдвоем\b|\bс мужем\b|\bс женой\b", 2),
             (r"\bвтроем\b", 3),
-            (r"\bодна\b|\bодин\b", 1),
+            # «один/одна» — состав, но не перед «день/ночь/неделю» («на один день позже»)
+            (r"\b(?:одна|один)\b(?!\s+(?:дн\w*|день|ноч\w*|недел\w*))", 1),
         ):
             if re.search(pattern, text):
                 adults = count
@@ -532,7 +558,10 @@ def parse_change(text: str, current: TripRequest, *, today: date) -> dict[str, A
         patch.update(parse_when(low, today) or {})
         if budget := _budget(low):
             patch["budget"] = budget
-        elif "бюджет меньше" in low and current.budget is not None:
+        elif (
+            re.search(r"\b(?:бюджет\s+меньше|подешевле|дешевле)\b", low)
+            and current.budget is not None
+        ):
             patch["budget"] = (current.budget * Decimal("0.8")).quantize(Decimal("0.01"))
             extra.append(
                 Assumption(

@@ -4,11 +4,14 @@ LLM не собирает `TripRequest` сама: она заполняет `Req
 а `apply_draft` проверяет черновик теми же правилами, что и разборщик, и собирает запрос.
 Так модель не подсунет несуществующий город, прошедшую дату или отрицательный бюджет.
 
-`understand` (задача 3) зовёт LLM и передаёт её ответ в `apply_draft`; пока здесь заглушка лида.
+`understand` — один вызов модели на сообщение; сбой модели или ответ не по схеме → `None`,
+и оркестратор разбирает сообщение правилами, как в MVP.
 """
 
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
+from string import Template
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
@@ -19,11 +22,14 @@ from trip_pilot.domain.errors import DatesInPast, DomainError, NoResults
 from trip_pilot.domain.offers import Destination
 from trip_pilot.domain.request import Assumption, ChildAge, MustFlag, Party, Pet, TripRequest
 from trip_pilot.domain.trip_state import TripState
-from trip_pilot.ports import LLM
+from trip_pilot.ports import LLM, ChatMessages, LLMUnavailable
 
 # Насколько сдвигается бюджет по «подешевле» / «подороже», как в parse_change.
 _LESS = Decimal("0.8")
 _MORE = Decimal("1.2")
+_PROMPT_PATH = Path(__file__).with_name("prompts") / "understand.md"
+# Границы, внутри которых текст человека — данные, а не инструкции.
+_OPEN, _CLOSE = "<сообщение пользователя>", "</сообщение пользователя>"
 
 
 class RequestDraft(BaseModel):
@@ -192,6 +198,37 @@ def apply_draft(
     return Success(request)
 
 
+def _system_prompt(state: TripState, catalog: list[Destination], today: date) -> str:
+    """Системный промпт: правила, каталог, сегодня и что уже собрано в диалоге."""
+    request = (
+        state.request.model_dump_json(exclude={"assumptions"})
+        if state.request is not None
+        else "не собран"
+    )
+    question = (
+        f"{state.pending_question.text} (слот: {state.pending_question.slot})"
+        if state.pending_question is not None
+        else "нет"
+    )
+    catalog_text = "\n".join(
+        f"- {destination.slug}: {destination.name} — {destination.country}"
+        for destination in catalog
+    )
+    template = Template(_PROMPT_PATH.read_text(encoding="utf-8"))
+    return template.substitute(
+        today=today.isoformat(),
+        catalog=catalog_text or "- пусто",
+        request=request,
+        question=question,
+    )
+
+
+def _user_message(text: str) -> str:
+    """Текст человека в границах; закрывающую границу внутри текста нейтрализуем."""
+    safe = text.replace(_CLOSE, _CLOSE.replace(">", " (в тексте)>"))
+    return f"{_OPEN}\n{safe}\n{_CLOSE}"
+
+
 async def understand(
     text: str,
     state: TripState,
@@ -200,5 +237,19 @@ async def understand(
     today: date,
     llm: LLM,
 ) -> Result[TripRequest, DomainError] | None:
-    """None — «разбери правилами». Тело заменит задача 3 (промпт + llm.structured)."""
-    return None
+    """Сообщение → запрос через LLM. None — «разбери правилами» (нет модели или ответ не прошёл).
+
+    Ровно один вызов модели на сообщение: она заполняет черновик, проверяет его код.
+    """
+    if not llm.enabled:
+        return None
+    messages: ChatMessages = [
+        {"role": "system", "content": _system_prompt(state, catalog, today)},
+        {"role": "user", "content": _user_message(text)},
+    ]
+    try:
+        draft = await llm.structured(messages, RequestDraft)
+    except (LLMUnavailable, ValidationError):
+        return None
+    return apply_draft(draft, state, catalog=catalog, today=today)
+

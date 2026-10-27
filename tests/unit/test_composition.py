@@ -65,10 +65,24 @@ def test_real_toolkit_goes_from_request_to_checkout():
     assert chosen.selected_package_id == package_id
 
 
-def test_with_key_but_stub_functions_agent_does_not_claim_ai():
-    # Ключ задан, а understand и narrate у data — пока заглушки: модель не вызывается,
-    # и шаги «с помощью ИИ» в интерфейсе появляться не должны.
-    events = run(agent_on_fakes(FakeLLM([])).handle(uuid.uuid4(), "Из Москвы в Анталью в ноябре"))
+def test_without_key_agent_does_not_claim_ai():
+    # Ключа нет: модель не вызывается, шагов «с помощью ИИ» быть не должно,
+    # путь тот же, что в MVP.
+    events = run(agent_on_fakes().handle(uuid.uuid4(), "Из Москвы в Анталью в ноябре"))
     steps = [e.text for e in events if isinstance(e, StepEvent)]
     assert not [s for s in steps if "с помощью ИИ" in s]
     assert plan_of(events).packages  # путь тот же, что в MVP
+
+
+def test_with_key_model_understanding_keeps_the_same_path():
+    # Ключ есть и модель ответила черновиком: запрос собирает код, путь тот же,
+    # а шаг «с помощью ИИ» появляется по факту ответа модели, а не по факту ключа.
+    draft = '{"origin": "moscow", "destination": "Анталья", "month": 11}'
+    events = run(
+        agent_on_fakes(FakeLLM([draft])).handle(uuid.uuid4(), "Из Москвы в Анталью в ноябре")
+    )
+    steps = [e.text for e in events if isinstance(e, StepEvent)]
+    assert [s for s in steps if "с помощью ИИ" in s]
+    plan = plan_of(events)
+    assert plan.request.origin == "moscow" and plan.request.destination == "antalya"
+    assert plan.packages

@@ -388,7 +388,9 @@ def _party(text: str, current: TripRequest) -> tuple[dict, list[str], set[str]]:
     if adults is not None:
         party["adults"] = adults
         fields.add("adults")
-    child = re.search(r"\b(?:ребен\w*|детьми|дети|детей)\b", text)
+    # «отель для детей» и «детский отель» — требование к отелю, а не состав поездки:
+    # ребёнка в такой фразе нет, поэтому состав не трогаем.
+    child = re.search(r"(?<!для )\b(?:ребен\w*|детьми|дети|детей)\b", text)
     if child:
         ages = re.search(r"(\d+(?:\s*(?:,|и)\s*\d+)*)\s*(?:лет|года?|год)\b", text[child.end() :])
         is_range = re.search(r"\bдо\s+\d+\s*(?:лет|год)", text[child.end() :])

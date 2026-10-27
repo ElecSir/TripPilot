@@ -377,3 +377,10 @@ def test_country_outside_catalog_is_not_invented():
     result = parse_request("во Вьетнам", catalog=DESTINATIONS, today=TODAY)
     assert isinstance(result, Failure)
     assert isinstance(result.failure(), UnknownCity)
+
+def test_hotel_for_children_is_a_requirement_not_a_child():
+    """«отель для детей» — про отель: состав поездки не меняется, ребёнка не выдумываем."""
+    for text in ("отель для детей", "детский отель"):
+        request = parse_request(text, catalog=CATALOG, today=TODAY).unwrap()
+        assert "kids_friendly" in request.must
+        assert request.party.children_ages == []

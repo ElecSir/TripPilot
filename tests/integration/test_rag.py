@@ -12,8 +12,9 @@ from trip_pilot.adapters.db.engine import create_engine, create_session_factory
 from trip_pilot.adapters.db.knowledge import KbChunk, KbDocument
 from trip_pilot.adapters.db.reference import Destination
 from trip_pilot.config import get_settings
+from trip_pilot.domain.request import Party, TripRequest
 from trip_pilot.rag.index import build_index
-from trip_pilot.rag.retriever import search
+from trip_pilot.rag.retriever import PostgresKnowledgeBase, search
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("INTEGRATION"),
@@ -438,5 +439,72 @@ def test_search_finds_animal_and_season_sections(tmp_path):
                 )
             finally:
                 await session.rollback()
+
+    on_db(scenario)
+
+
+def test_context_returns_relevant_sections_in_priority_order(tmp_path):
+    """Контекст для поездки с детьми в ноябре содержит нужные разделы."""
+
+    async def scenario(sessions):
+        slug = f"rag-context-{uuid.uuid4().hex[:12]}"
+
+        async with sessions() as session:
+            try:
+                await create_destination(session, slug)
+
+                make_document(
+                    tmp_path,
+                    title=f"Путеводитель {slug}",
+                    destination=slug,
+                    body=(
+                        "## Почему ехать\n\nОписание направления.\n\n"
+                        "## Когда лучше\n\nОсобенности погоды.\n\n"
+                        "## С детьми\n\nСоветы для семей.\n\n"
+                        "## С животными\n\nСоветы путешественникам с питомцами.\n\n"
+                        "## Минусы и риски\n\nВозможные неудобства."
+                    ),
+                )
+
+                await build_index(session, tmp_path)
+                await session.commit()
+
+                knowledge_base = PostgresKnowledgeBase(sessions)
+                request = TripRequest(
+                    month=11,
+                    party=Party(children_ages=[7]),
+                )
+
+                hits = await knowledge_base.context(request, slug)
+
+                headings = [
+                    hit.heading_path.split(" › ")[-1]
+                    for hit in hits
+                ]
+
+                assert headings == [
+                    "Почему ехать",
+                    "С детьми",
+                    "Когда лучше",
+                    "Минусы и риски",
+                ]
+            finally:
+                await session.rollback()
+
+    on_db(scenario)
+
+
+def test_context_returns_empty_for_unknown_destination():
+    """Для неизвестного направления контекст пустой, а не ошибка."""
+
+    async def scenario(sessions):
+        knowledge_base = PostgresKnowledgeBase(sessions)
+
+        result = await knowledge_base.context(
+            TripRequest(),
+            "missing-destination-for-context-test",
+        )
+
+        assert result == []
 
     on_db(scenario)

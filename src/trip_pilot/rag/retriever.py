@@ -285,8 +285,77 @@ class PostgresKnowledgeBase:
     async def context(
         self, request: TripRequest, destination: str, *, limit: int = 4
     ) -> list[KnowledgeHit]:
-        """Разделы под запрос для объяснений. Заглушка лида: пока пусто.
+        """Подобрать разделы базы знаний для объяснения поездки."""
+        if not destination or limit <= 0:
+            return []
 
-        rag заменяет тело (задача 3 в tasks/rag.md).
-        """
-        return []
+        # Сначала проверяем, что направление существует.
+        async with self._session_factory() as session:
+            destination_id = await session.scalar(
+                select(Destination.id).where(Destination.slug == destination)
+            )
+
+            if destination_id is None:
+                return []
+
+            # Разделы упорядочены по важности для объяснения.
+            headings = ["Почему ехать"]
+
+            if request.party.children_ages:
+                headings.append("С детьми")
+
+            if request.party.pets:
+                headings.append("С животными")
+
+            if request.month is not None:
+                headings.append("Когда лучше")
+
+            headings.append("Минусы и риски")
+
+            # Ищем именно по заголовку, не по полнотекстовому индексу.
+            conditions = [
+                KbChunk.heading_path.ilike(f"% › {heading}")
+                for heading in headings
+            ]
+
+            statement = (
+                select(
+                    KbChunk,
+                    KbDocument.title.label("document_title"),
+                    KbDocument.source.label("source"),
+                )
+                .join(KbDocument, KbChunk.document_id == KbDocument.id)
+                .where(
+                    KbDocument.destination_id == destination_id,
+                    KbDocument.doc_type == "guide",
+                    or_(*conditions),
+                )
+            )
+
+            result = await session.execute(statement)
+            rows = result.all()
+
+        # Сохраняем приоритет заголовков, независимо от порядка в БД.
+        priority = {
+            heading: index
+            for index, heading in enumerate(headings)
+        }
+
+        hits = [
+            KnowledgeHit(
+                text=row[0].content,
+                title=row.document_title,
+                heading_path=row[0].heading_path,
+                source=row.source,
+                score=float(
+                    priority.get(
+                        (row[0].heading_path or "").split(" › ")[-1],
+                        len(priority),
+                    )
+                ),
+            )
+            for row in rows
+        ]
+
+        hits.sort(key=lambda hit: hit.score)
+        return hits[:limit]

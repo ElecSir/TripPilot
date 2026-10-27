@@ -1,7 +1,8 @@
 """Полнотекстовый поиск и адаптер базы знаний RAG."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, or_, select
@@ -9,8 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from trip_pilot.adapters.db.knowledge import KbChunk, KbDocument
 from trip_pilot.adapters.db.reference import Destination
+from trip_pilot.adapters.llm.openai_compat import make_llm
+from trip_pilot.config import get_settings
 from trip_pilot.domain.knowledge import KnowledgeHit
 from trip_pilot.domain.request import TripRequest
+from trip_pilot.ports import LLMUnavailable
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -44,6 +48,11 @@ _SECTION_SYNONYMS = {
         "terms": ("ребёнок", "дети", "семья"),
     },
 }
+
+@lru_cache(maxsize=1)
+def _get_llm():
+    """Создать LLM-клиент один раз и повторно использовать его."""
+    return make_llm(get_settings())
 
 async def search(
     session: AsyncSession,
@@ -95,6 +104,23 @@ async def search(
     result = await session.execute(strict_statement)
     rows = result.all()
 
+    # Пытаемся получить embedding поискового запроса.
+    # Если это не получится, останется полнотекстовый поиск.
+    query_vector = None
+
+    try:
+        llm = _get_llm()
+
+        if llm.enabled:
+            embeddings = await llm.embed([query.strip()])
+
+            if embeddings and len(embeddings[0]) == 1024:
+                query_vector = embeddings[0]
+
+    except LLMUnavailable:
+        # API недоступен — продолжаем работать без векторного поиска.
+        query_vector = None
+
     # Если строгий поиск ничего не нашёл, ищем по любому слову
     # и добавляем синонимы тематических разделов.
     if not rows:
@@ -141,7 +167,9 @@ async def search(
         result = await session.execute(fallback_statement)
         rows = result.all()
 
-    return [
+    
+    # Преобразуем результаты полнотекстового поиска.
+    text_hits = [
         RetrievedChunk(
             chunk=row[0],
             document_title=row.document_title,
@@ -150,6 +178,66 @@ async def search(
             source=row.source,
         )
         for row in rows
+    ]
+
+    # Если embedding получить не удалось, используем только полнотекстовый поиск.
+    if query_vector is None:
+        return text_hits
+
+    # Векторный поиск по PostgreSQL с pgvector.
+    vector_statement = (
+        base_statement
+        .add_columns(
+            KbChunk.embedding.cosine_distance(query_vector).label("distance")
+        )
+        .where(KbChunk.embedding.is_not(None))
+        .order_by(KbChunk.embedding.cosine_distance(query_vector))
+        .limit(limit)
+    )
+
+    vector_result = await session.execute(vector_statement)
+    vector_rows = vector_result.all()
+
+    vector_hits = [
+        RetrievedChunk(
+            chunk=row[0],
+            document_title=row.document_title,
+            destination=row.destination,
+            score=float(row.distance),
+            source=row.source,
+        )
+        for row in vector_rows
+    ]
+
+    # Объединяем результаты через Reciprocal Rank Fusion (RRF).
+    # Чем выше позиция фрагмента в выдаче, тем больше его вклад.
+    rrf_k = 60
+    fused: dict[int, tuple[RetrievedChunk, float]] = {}
+
+    for ranked_hits in (text_hits, vector_hits):
+        for rank, hit in enumerate(ranked_hits, start=1):
+            chunk_id = hit.chunk.id
+            contribution = 1.0 / (rrf_k + rank)
+
+            if chunk_id in fused:
+                previous_hit, previous_score = fused[chunk_id]
+                fused[chunk_id] = (
+                    previous_hit,
+                    previous_score + contribution,
+                )
+            else:
+                fused[chunk_id] = (hit, contribution)
+
+    # Сортируем по итоговому RRF-score и возвращаем не больше limit фрагментов.
+    ranked_results = sorted(
+        fused.values(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    return [
+        replace(hit, score=rrf_score)
+        for hit, rrf_score in ranked_results[:limit]
     ]
 
 

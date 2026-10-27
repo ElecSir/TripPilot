@@ -45,11 +45,17 @@ def make_result(value):
 
 
 def make_session(*results):
-    """Создать мок асинхронной сессии."""
     session = MagicMock()
-    session.execute = AsyncMock(side_effect=list(results))
+
+    empty_result = make_result(None)
+    empty_result.scalars.return_value.all.return_value = []
+
+    session.execute = AsyncMock(
+        side_effect=[empty_result, *results]
+    )
     session.flush = AsyncMock()
     session.add = MagicMock()
+
     return session
 
 
@@ -178,3 +184,53 @@ def test_build_index_handles_missing_directory(tmp_path):
 
     session.execute.assert_not_awaited()
     session.add.assert_not_called()
+
+def test_build_index_updates_title_without_creating_duplicate(tmp_path):
+    """Переименование заголовка обновляет существующий документ."""
+    content = make_markdown().replace("title: Анталья", "title: Анталья — море")
+    (tmp_path / "antalya.md").write_text(content, encoding="utf-8")
+
+    destination = MagicMock()
+    destination.id = 1
+
+    document = MagicMock()
+    document.id = "test-document-id"
+    document.title = "Анталья"
+    document.content_hash = "old-hash"
+    document.source_url = "antalya.md"
+
+    session = make_session(
+        make_result(destination),
+        make_result(document),
+        MagicMock(),
+    )
+
+    asyncio.run(build_index(session, tmp_path))
+
+    assert document.title == "Анталья — море"
+    assert document.source_url == "antalya.md"
+    session.add.assert_called()
+
+def test_build_index_deletes_documents_for_removed_files(tmp_path):
+    """Документ и его фрагменты удаляются, если исходного файла больше нет."""
+    document = MagicMock()
+    document.id = "removed-document-id"
+    document.source_url = "old_destination.md"
+
+    cleanup_result = MagicMock()
+    cleanup_result.scalars.return_value.all.return_value = [document]
+
+    session = MagicMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            cleanup_result,
+            MagicMock(),
+            MagicMock(),
+        ]
+    )
+    session.flush = AsyncMock()
+    session.add = MagicMock()
+
+    asyncio.run(build_index(session, tmp_path))
+
+    assert session.execute.await_count == 3

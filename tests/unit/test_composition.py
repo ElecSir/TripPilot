@@ -78,11 +78,15 @@ def test_with_key_model_understanding_keeps_the_same_path():
     # Ключ есть и модель ответила черновиком: запрос собирает код, путь тот же,
     # а шаг «с помощью ИИ» появляется по факту ответа модели, а не по факту ключа.
     draft = '{"origin": "moscow", "destination": "Анталья", "month": 11}'
+    narration = '{"packages": []}'  # второй вызов — объяснения; пусто = остаются шаблоны
     events = run(
-        agent_on_fakes(FakeLLM([draft])).handle(uuid.uuid4(), "Из Москвы в Анталью в ноябре")
+        agent_on_fakes(FakeLLM([draft, narration])).handle(
+            uuid.uuid4(), "Из Москвы в Анталью в ноябре"
+        )
     )
     steps = [e.text for e in events if isinstance(e, StepEvent)]
     assert [s for s in steps if "с помощью ИИ" in s]
     plan = plan_of(events)
     assert plan.request.origin == "moscow" and plan.request.destination == "antalya"
     assert plan.packages
+    assert all(package.tradeoffs for package in plan.packages)  # сравнения на месте без модели

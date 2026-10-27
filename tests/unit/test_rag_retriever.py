@@ -46,7 +46,7 @@ def test_search_executes_query_with_filters():
     )
 
     assert result == []
-    session.execute.assert_awaited_once()
+    assert session.execute.await_count == 2
 
     statement = session.execute.await_args.args[0]
     sql = str(statement.compile(compile_kwargs={"literal_binds": False}))

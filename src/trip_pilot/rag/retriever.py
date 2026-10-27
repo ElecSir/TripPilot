@@ -1,9 +1,10 @@
 """Полнотекстовый поиск и адаптер базы знаний RAG."""
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trip_pilot.adapters.db.knowledge import KbChunk, KbDocument
@@ -26,6 +27,24 @@ class RetrievedChunk:
     source: str
 
 
+_SECTION_SYNONYMS = {
+    "animals": {
+        "prefixes": ("собак", "кош", "питом", "животн"),
+        "heading": "%С животными%",
+        "terms": ("животными", "животное", "питомец"),
+    },
+    "season": {
+        "prefixes": ("сезон", "погод", "климат", "когда", "ехать"),
+        "heading": "%Когда лучше%",
+        "terms": ("сезон", "погода", "климат"),
+    },
+    "kids": {
+        "prefixes": ("ребен", "ребён", "дет", "сем"),
+        "heading": "%С детьми%",
+        "terms": ("ребёнок", "дети", "семья"),
+    },
+}
+
 async def search(
     session: AsyncSession,
     query: str,
@@ -33,39 +52,94 @@ async def search(
     doc_type: str | None = None,
     limit: int = 5,
 ) -> list[RetrievedChunk]:
-    """Найти наиболее релевантные фрагменты по текстовому запросу."""
+    """Найти релевантные фрагменты, включая поиск по отдельным словам."""
     if not query or not query.strip() or limit <= 0:
         return []
 
-    ts_query = func.websearch_to_tsquery("russian", query.strip())
+    tokens = list(dict.fromkeys(re.findall(r"[a-zа-яё0-9]+", query.casefold())))
+    if not tokens:
+        return []
 
-    statement = (
+    base_statement = (
         select(
             KbChunk,
             KbDocument.title.label("document_title"),
             KbDocument.source.label("source"),
             Destination.slug.label("destination"),
-            func.ts_rank_cd(KbChunk.tsv, ts_query).label("score"),
         )
         .join(KbDocument, KbChunk.document_id == KbDocument.id)
         .outerjoin(
             Destination,
             KbDocument.destination_id == Destination.id,
         )
-        .where(KbChunk.tsv.op("@@")(ts_query))
     )
 
     if destination:
-        statement = statement.where(Destination.slug == destination)
+        base_statement = base_statement.where(Destination.slug == destination)
 
     if doc_type:
-        statement = statement.where(KbDocument.doc_type == doc_type)
+        base_statement = base_statement.where(KbDocument.doc_type == doc_type)
 
-    statement = statement.order_by(
-        func.ts_rank_cd(KbChunk.tsv, ts_query).desc()
-    ).limit(limit)
+    # Сначала пробуем строгий полнотекстовый поиск.
+    strict_query = func.websearch_to_tsquery("russian", query.strip())
+    strict_statement = (
+        base_statement
+        .add_columns(
+            func.ts_rank_cd(KbChunk.tsv, strict_query).label("score")
+        )
+        .where(KbChunk.tsv.op("@@")(strict_query))
+        .order_by(func.ts_rank_cd(KbChunk.tsv, strict_query).desc())
+        .limit(limit)
+    )
 
-    result = await session.execute(statement)
+    result = await session.execute(strict_statement)
+    rows = result.all()
+
+    # Если строгий поиск ничего не нашёл, ищем по любому слову
+    # и добавляем синонимы тематических разделов.
+    if not rows:
+        fallback_terms = list(tokens)
+        heading_conditions = []
+
+        for synonym in _SECTION_SYNONYMS.values():
+            if any(
+                token.startswith(synonym["prefixes"])
+                for token in tokens
+            ):
+                heading_conditions.append(
+                    KbChunk.heading_path.ilike(synonym["heading"])
+                )
+                fallback_terms.extend(synonym["terms"])
+
+        fallback_terms = list(dict.fromkeys(fallback_terms))
+        fallback_query = func.websearch_to_tsquery(
+            "russian",
+            " OR ".join(fallback_terms),
+        )
+
+        word_conditions = [
+            KbChunk.tsv.op("@@")(
+                func.plainto_tsquery("russian", token)
+            )
+            for token in tokens
+        ]
+
+        conditions = [*word_conditions, *heading_conditions]
+
+        fallback_statement = (
+            base_statement
+            .add_columns(
+                func.ts_rank_cd(KbChunk.tsv, fallback_query).label("score")
+            )
+            .where(or_(*conditions))
+            .order_by(
+                func.ts_rank_cd(KbChunk.tsv, fallback_query).desc()
+            )
+            .limit(limit)
+        )
+
+        result = await session.execute(fallback_statement)
+        rows = result.all()
 
     return [
         RetrievedChunk(
@@ -75,7 +149,7 @@ async def search(
             score=float(row.score),
             source=row.source,
         )
-        for row in result.all()
+        for row in rows
     ]
 
 

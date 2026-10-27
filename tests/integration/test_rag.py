@@ -41,11 +41,12 @@ def make_document(
     title: str,
     destination: str,
     body: str,
+    doc_type: str = "guide",
 ) -> None:
     """Создать тестовый Markdown-документ с корректным frontmatter."""
     content = f"""---
 title: {title}
-doc_type: guide
+doc_type: {doc_type}
 destination: {destination}
 months: [5, 6, 7, 8, 9, 10]
 tags: [sea, kids]
@@ -242,6 +243,199 @@ def test_search_finds_children_section_and_filters_destination(tmp_path):
                 # Пустой запрос должен обрабатываться без исключения.
                 empty_hits = await search(session, "   ", destination=slug)
                 assert empty_hits == []
+            finally:
+                await session.rollback()
+
+    on_db(scenario)
+
+
+def test_build_index_renames_title_without_duplicate(tmp_path):
+    """Изменение title обновляет документ, а не создаёт дубликат."""
+
+    async def scenario(sessions):
+        slug = f"rag-test-{uuid.uuid4().hex[:12]}"
+        filename = f"{slug}.md"
+        old_title = f"Старое название {slug}"
+        new_title = f"Новое название {slug}"
+
+        async with sessions() as session:
+            try:
+                await create_destination(session, slug)
+
+                make_document(
+                    tmp_path,
+                    title=old_title,
+                    destination=slug,
+                    doc_type="destination",
+                    body=(
+                        "## Почему ехать\n\n"
+                        "Описание направления для тестирования."
+                    ),
+                )
+
+                await build_index(session, tmp_path)
+                await session.flush()
+
+                original = await session.scalar(
+                    select(KbDocument).where(
+                        KbDocument.source_url == filename
+                    )
+                )
+                assert original is not None
+                original_id = original.id
+
+                initial_chunks = await count_chunks(session, original_id)
+                assert initial_chunks > 0
+
+                # Меняем только заголовок, не имя файла.
+                make_document(
+                    tmp_path,
+                    title=new_title,
+                    destination=slug,
+                    doc_type="destination",
+                    body=(
+                        "## Почему ехать\n\n"
+                        "Описание направления для тестирования."
+                    ),
+                )
+
+                await build_index(session, tmp_path)
+                await session.flush()
+
+                documents = (
+                    await session.scalars(
+                        select(KbDocument).where(
+                            KbDocument.source_url == filename
+                        )
+                    )
+                ).all()
+
+                assert len(documents) == 1
+                assert documents[0].id == original_id
+                assert documents[0].title == new_title
+
+                assert await count_documents(session, old_title) == 0
+                assert await count_documents(session, new_title) == 1
+                assert await count_chunks(session, original_id) == initial_chunks
+            finally:
+                await session.rollback()
+
+    on_db(scenario)
+
+
+def test_build_index_deletes_removed_document_and_chunks(tmp_path):
+    """Удаление Markdown-файла удаляет документ и все его фрагменты."""
+
+    async def scenario(sessions):
+        slug = f"rag-test-{uuid.uuid4().hex[:12]}"
+        filename = f"{slug}.md"
+        title = f"Удаляемый документ {slug}"
+
+        async with sessions() as session:
+            try:
+                await create_destination(session, slug)
+
+                make_document(
+                    tmp_path,
+                    title=title,
+                    destination=slug,
+                    doc_type="destination",
+                    body=(
+                        "## Почему ехать\n\n"
+                        "Первый тестовый фрагмент.\n\n"
+                        "## Минусы и риски\n\n"
+                        "Второй тестовый фрагмент."
+                    ),
+                )
+
+                await build_index(session, tmp_path)
+                await session.flush()
+
+                document = await session.scalar(
+                    select(KbDocument).where(
+                        KbDocument.source_url == filename
+                    )
+                )
+                assert document is not None
+
+                document_id = document.id
+                assert await count_chunks(session, document_id) > 0
+
+                # Удаляем исходный файл и повторно запускаем индексацию.
+                (tmp_path / filename).unlink()
+
+                await build_index(session, tmp_path)
+                await session.flush()
+
+                remaining_document = await session.scalar(
+                    select(KbDocument).where(
+                        KbDocument.source_url == filename
+                    )
+                )
+                remaining_chunks = await count_chunks(session, document_id)
+
+                assert remaining_document is None
+                assert remaining_chunks == 0
+            finally:
+                await session.rollback()
+
+    on_db(scenario)
+
+
+def test_search_finds_animal_and_season_sections(tmp_path):
+    """Запросы о собаке и сезоне находят тематические разделы."""
+
+    async def scenario(sessions):
+        slug = f"rag-test-{uuid.uuid4().hex[:12]}"
+        title = f"Путеводитель для тематического поиска {slug}"
+
+        async with sessions() as session:
+            try:
+                await create_destination(session, slug)
+
+                make_document(
+                    tmp_path,
+                    title=title,
+                    destination=slug,
+                    doc_type="destination",
+                    body=(
+                        "## С животными\n\n"
+                        "Путешественники могут планировать отдых "
+                        "вместе с домашними питомцами.\n\n"
+                        "## Когда лучше\n\n"
+                        "Выбирайте сезон поездки с учётом климата "
+                        "и погодных условий."
+                    ),
+                )
+
+                await build_index(session, tmp_path)
+                await session.flush()
+
+                animal_hits = await search(
+                    session,
+                    "можно ли с собакой",
+                    destination=slug,
+                    limit=5,
+                )
+
+                assert animal_hits, "Поиск по собаке ничего не нашёл"
+                assert any(
+                    "С животными" in (hit.chunk.heading_path or "")
+                    for hit in animal_hits
+                )
+
+                season_hits = await search(
+                    session,
+                    "когда лучше ехать",
+                    destination=slug,
+                    limit=5,
+                )
+
+                assert season_hits, "Поиск по сезону ничего не нашёл"
+                assert any(
+                    "Когда лучше" in (hit.chunk.heading_path or "")
+                    for hit in season_hits
+                )
             finally:
                 await session.rollback()
 

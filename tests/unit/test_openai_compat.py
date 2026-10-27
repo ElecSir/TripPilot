@@ -214,3 +214,27 @@ def test_structured_accepts_json_markdown_fence(monkeypatch):
 
     assert result == Greeting(text="Поехали в Сочи")
     client.chat.completions.create.assert_awaited_once()
+
+
+def test_complete_raises_llm_unavailable_after_rate_limit_retries(
+    monkeypatch,
+):
+    llm, client = make_adapter(monkeypatch)
+
+    request = httpx.Request("POST", "https://example.com")
+    response = httpx.Response(429, request=request)
+
+    from openai import RateLimitError
+
+    error = RateLimitError(
+        "Превышен лимит запросов",
+        response=response,
+        body=None,
+    )
+    client.chat.completions.create.side_effect = error
+
+    with pytest.raises(LLMUnavailable):
+        run(llm.complete([{"role": "user", "content": "Привет"}]))
+
+    assert client.chat.completions.create.await_count == 3
+    

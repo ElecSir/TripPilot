@@ -12,6 +12,7 @@ from trip_pilot.domain.errors import BudgetTooLow, NoResults
 from trip_pilot.domain.offers import Hotel, Leg, Package, Tier, Transfer
 from trip_pilot.domain.request import Party, TripRequest
 from trip_pilot.planning.itinerary import check_package
+from trip_pilot.planning.scoring import score
 
 _WHY: dict[Tier, str] = {
     "economy": "Минимальная полная стоимость среди подходящих вариантов",
@@ -57,7 +58,7 @@ def simple_packages(
             return Failure(BudgetTooLow(request.budget, min(c.total for c in candidates)))
         candidates = affordable
 
-    chosen = _choose(candidates)
+    chosen = _choose(candidates, request)
     tiers = [tier for tier in _ORDER if tier in chosen]
     # id уникален в плане (p1–p3): по нему UI выбирает пакет
     packages = [
@@ -101,6 +102,12 @@ def _candidates(
     hotels_ok = [
         h for h in hotels if (h.pets_allowed or not pets) and (h.kids_friendly or not kids)
     ]
+    # С детьми берём только «для детей», если такие отели вообще есть: иначе «Баланс»
+    # выбирал бы дешёвый отель без отметки, и предупреждение в рисках было бы вместо выбора.
+    if request.party.children_ages and not kids:
+        friendly = [hotel for hotel in hotels_ok if hotel.kids_friendly]
+        if friendly:
+            hotels_ok = friendly
     if not outs:
         return "нет рейсов туда, подходящих под условия"
     if not backs:
@@ -128,30 +135,53 @@ def _candidates(
     return result or "нет сочетаний рейсов и отеля с подходящими датами"
 
 
-def _choose(candidates: list[_Candidate]) -> dict[Tier, _Candidate]:
-    """По одному кандидату на тариф; один и тот же вариант дважды не берётся."""
+def _plain(candidate: _Candidate, request: TripRequest, nights: int) -> Package:
+    """Пакет для оценки: без проверки стыковок, она нужна только готовому пакету."""
+    check_in = request.date_from
+    assert check_in is not None  # проверено в simple_packages
+    return Package(
+        id="score",
+        tier="balance",
+        destination=candidate.hotel.destination,
+        outbound=candidate.outbound,
+        inbound=candidate.inbound,
+        hotel=candidate.hotel,
+        transfer=candidate.transfer,
+        check_in=check_in,
+        check_out=check_in + timedelta(days=nights),
+        nights=nights,
+        total=candidate.total,
+        price_breakdown=candidate.breakdown,
+    )
+
+
+def _choose(candidates: list[_Candidate], request: TripRequest) -> dict[Tier, _Candidate]:
+    """По одному кандидату на тариф; один и тот же вариант дважды не берётся.
+
+    Тарифы значат ровно то, что написано: economy — самая низкая цена, comfort — лучшая
+    оценка (по возможности без пересадок), balance — лучшая оценка на рубль (`scoring.py`).
+    """
     pool = list(candidates)
     chosen: dict[Tier, _Candidate] = {}
+    nights = request.nights or 1
+    totals = [candidate.total for candidate in candidates]
+    reference = (min(totals), max(totals)) if totals else None
+    scored = {
+        id(candidate): score(
+            _plain(candidate, request, nights), request, reference=reference
+        ).total
+        for candidate in candidates
+    }
 
     def economy(items: list[_Candidate]) -> _Candidate:
         return min(items, key=lambda c: (c.total, -c.hotel.rating, c.hotel.id))
 
     def comfort(items: list[_Candidate]) -> _Candidate:
         direct = [c for c in items if c.direct] or items
-        return max(direct, key=lambda c: (c.hotel.stars, c.hotel.rating, -c.total))
-
-    ratings = [c.hotel.rating for c in candidates]
-    totals = [c.total for c in candidates]
-    r_lo, r_span = min(ratings), max(ratings) - min(ratings)
-    t_lo, t_span = min(totals), max(totals) - min(totals)
+        return max(direct, key=lambda c: (c.hotel.stars, c.hotel.rating, scored[id(c)], -c.total))
 
     def balance(items: list[_Candidate]) -> _Candidate:
-        def score(c: _Candidate) -> float:
-            rating = (c.hotel.rating - r_lo) / r_span if r_span else 1.0
-            price = float((c.total - t_lo) / t_span) if t_span else 0.0
-            return 0.5 * rating + 0.5 * (1 - price)
-
-        return max(items, key=lambda c: (score(c), -c.total))
+        return max(items, key=lambda c: (scored[id(c)] / float(c.total), -c.total))
 
     pickers: list[tuple[Tier, Callable[[list[_Candidate]], _Candidate]]] = [
         ("economy", economy),
@@ -161,7 +191,10 @@ def _choose(candidates: list[_Candidate]) -> dict[Tier, _Candidate]:
     for tier, pick in pickers:
         if not pool:
             break
-        candidate = pick(pool)
+        # Три пакета должны быть разными не только по рейсам: отель тоже не повторяем.
+        used = {candidate.hotel.id for candidate in chosen.values()}
+        fresh = [candidate for candidate in pool if candidate.hotel.id not in used] or pool
+        candidate = pick(fresh)
         pool.remove(candidate)
         chosen[tier] = candidate
     return chosen
@@ -189,4 +222,10 @@ def _build(
         why=[_WHY[tier]],
         risks=risks,
     )
+    # Почему выбран именно он: самые весомые вклады оценки, словами и без выдуманных чисел.
+    reasons = score(package, request).reasons()
+    if reasons:
+        package = package.model_copy(
+            update={"why": [*package.why, f"Выбрали: {' и '.join(reasons)}"]}
+        )
     return package.model_copy(update={"issues": check_package(package)})

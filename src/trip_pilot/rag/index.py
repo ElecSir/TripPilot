@@ -8,9 +8,10 @@ from pathlib import Path
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from trip_pilot.adapters.db.knowledge import KbChunk, KbDocument
+from trip_pilot.adapters.db.knowledge import EMBEDDING_DIM, KbChunk, KbDocument
 from trip_pilot.adapters.db.reference import Destination
-from trip_pilot.ports import LLM
+from trip_pilot.config import Settings
+from trip_pilot.ports import LLM, LLMUnavailable
 from trip_pilot.rag.chunking import parse_frontmatter, split_into_chunks
 
 log = logging.getLogger(__name__)
@@ -157,7 +158,61 @@ async def build_index(session: AsyncSession, knowledge_dir: Path) -> None:
 
 
 async def embed_index(session: AsyncSession, llm: LLM) -> None:
-    """Эмбеддинги фрагментов (этап 1). Заглушка лида: пока ничего не делает.
+    """Заполнить эмбеддинги фрагментов базы знаний."""
 
-    rag заменяет тело (задача 4 в tasks/rag.md). Без ключа — пропуск, а не падение bootstrap.
-    """
+    if not llm.enabled:
+        log.info("RAG: LLM отключена, генерация эмбеддингов пропущена")
+        return
+
+    settings = Settings()
+    model = settings.embeddings_model
+
+    if not model:
+        log.info("RAG: модель эмбеддингов не задана, индексация пропущена")
+        return
+
+    result = await session.execute(
+        select(KbChunk).where(
+            or_(
+                KbChunk.embedding.is_(None),
+                KbChunk.embedding_model != model,
+                KbChunk.embedding_model.is_(None),
+            )
+        )
+    )
+    chunks = result.scalars().all()
+
+    if not chunks:
+        log.info("RAG: все фрагменты уже имеют актуальные эмбеддинги")
+        return
+
+    processed = 0
+
+    for start in range(0, len(chunks), 64):
+        batch = chunks[start : start + 64]
+
+        try:
+            vectors = await llm.embed([chunk.content for chunk in batch])
+        except LLMUnavailable as error:
+            log.warning("RAG: эмбеддинги недоступны, индексация пропущена: %s", error)
+            return
+
+        if len(vectors) != len(batch):
+            log.warning("RAG: число эмбеддингов не совпало с числом фрагментов")
+            return
+
+        if any(len(vector) != EMBEDDING_DIM for vector in vectors):
+            log.warning(
+                "RAG: размерность эмбеддинга не равна %d; индексация пропущена",
+                EMBEDDING_DIM,
+            )
+            return
+
+        for chunk, vector in zip(batch, vectors, strict=False):
+            chunk.embedding = vector
+            chunk.embedding_model = model
+
+        await session.flush()
+        processed += len(batch)
+
+    log.info("RAG: создано эмбеддингов: %d, модель: %s", processed, model)

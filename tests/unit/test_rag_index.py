@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from trip_pilot.adapters.db.knowledge import KbChunk, KbDocument
-from trip_pilot.rag.index import build_index
+from trip_pilot.ports import LLMUnavailable
+from trip_pilot.rag.index import build_index, embed_index
 
 
 def make_markdown() -> str:
@@ -234,3 +235,101 @@ def test_build_index_deletes_documents_for_removed_files(tmp_path):
     asyncio.run(build_index(session, tmp_path))
 
     assert session.execute.await_count == 3
+
+
+class FakeEmbeddingLLM:
+    enabled = True
+
+    def __init__(self, vectors=None, error=None):
+        self.vectors = vectors
+        self.error = error
+        self.calls = []
+
+    async def embed(self, texts):
+        self.calls.append(texts)
+        if self.error:
+            raise self.error
+        return self.vectors
+
+
+def make_embedding_session(chunks):
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = chunks
+
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+    session.flush = AsyncMock()
+    return session
+
+
+def test_embed_index_saves_vectors_and_model(monkeypatch):
+    """Эмбеддинги и название модели сохраняются во фрагментах."""
+    monkeypatch.setenv("EMBEDDINGS_MODEL", "test-embedding-model")
+
+    chunk = KbChunk(
+        document_id="test-document",
+        content="Отдых у моря",
+        embedding=None,
+        embedding_model=None,
+    )
+    session = make_embedding_session([chunk])
+    llm = FakeEmbeddingLLM(vectors=[[0.1] * 1024])
+
+    asyncio.run(embed_index(session, llm))
+
+    assert chunk.embedding == [0.1] * 1024
+    assert chunk.embedding_model == "test-embedding-model"
+    assert len(llm.calls) == 1
+    session.flush.assert_awaited_once()
+
+
+def test_embed_index_skips_when_llm_disabled():
+    """Без LLM индексация пропускается."""
+    session = make_embedding_session([])
+    llm = FakeEmbeddingLLM()
+    llm.enabled = False
+
+    asyncio.run(embed_index(session, llm))
+
+    session.execute.assert_not_awaited()
+    assert llm.calls == []
+
+
+def test_embed_index_handles_llm_unavailable(monkeypatch):
+    """Ошибка LLM не приводит к падению bootstrap."""
+    monkeypatch.setenv("EMBEDDINGS_MODEL", "test-embedding-model")
+
+    chunk = KbChunk(
+        document_id="test-document",
+        content="Отдых у моря",
+        embedding=None,
+        embedding_model=None,
+    )
+    session = make_embedding_session([chunk])
+    llm = FakeEmbeddingLLM(error=LLMUnavailable("API недоступен"))
+
+    asyncio.run(embed_index(session, llm))
+
+    assert chunk.embedding is None
+    session.flush.assert_not_awaited()
+
+
+def test_embed_index_skips_wrong_dimensions(monkeypatch, caplog):
+    """Вектор неверной размерности не сохраняется."""
+    monkeypatch.setenv("EMBEDDINGS_MODEL", "test-embedding-model")
+
+    chunk = KbChunk(
+        document_id="test-document",
+        content="Отдых у моря",
+        embedding=None,
+        embedding_model=None,
+    )
+    session = make_embedding_session([chunk])
+    llm = FakeEmbeddingLLM(vectors=[[0.1] * 768])
+
+    asyncio.run(embed_index(session, llm))
+
+    assert chunk.embedding is None
+    assert chunk.embedding_model is None
+    assert "размерность" in caplog.text.lower()
+    session.flush.assert_not_awaited()

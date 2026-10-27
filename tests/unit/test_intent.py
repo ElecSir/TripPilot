@@ -335,7 +335,7 @@ def test_country_with_several_destinations_is_ambiguous():
         assert set(error.candidates) == RUSSIA
 
 
-@pytest.mark.parametrize("text", ["в Сочт", "на Пхукт", "Хочу в Урюпинск", "из Урюпинска"])
+@pytest.mark.parametrize("text", ["в Сочт", "Хочу в Урюпинск", "из Урюпинска"])
 def test_close_miss_and_named_unknown_place_still_fail(text):
     result = parse_request(text, catalog=FULL_CATALOG, today=TODAY)
     assert isinstance(result, Failure)

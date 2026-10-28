@@ -20,6 +20,8 @@ RUN uv sync --frozen
 COPY tests ./tests
 COPY migrations ./migrations
 COPY data ./data
+# Кейсы оценки разбора (evals/cases/parse.yaml): их проверяет tests/unit/test_eval_cases.py.
+COPY evals ./evals
 CMD ["pytest"]
 
 FROM ${PYTHON_IMAGE} AS runtime

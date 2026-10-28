@@ -7,7 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Вся конфигурация берётся из переменных окружения (см. .env.example)."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Пустая переменная = значение по умолчанию: в .env.example все значения пустые
+    # (так просят организаторы), и `cp .env.example .env` не должен ломать запуск.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
 
     # В Docker собирается в docker-compose.yml из POSTGRES_*; значение ниже — для запуска
     # вне Docker с локальным override (порт БД 5433).
@@ -21,6 +23,8 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     embeddings_model: str | None = None
     llm_max_concurrency: int = 8
+    # Сколько секунд агент ждёт модель на одном шаге (понимание, объяснения); дольше — правила.
+    llm_step_timeout: float = 15.0
     demo_mode: str = "auto"
 
     @property

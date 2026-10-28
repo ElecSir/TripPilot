@@ -285,77 +285,122 @@ class PostgresKnowledgeBase:
     async def context(
         self, request: TripRequest, destination: str, *, limit: int = 4
     ) -> list[KnowledgeHit]:
-        """Подобрать разделы базы знаний для объяснения поездки."""
-        if not destination or limit <= 0:
+        """Вернуть важные разделы направления и подходящие общие правила."""
+        if limit <= 0:
             return []
 
-        # Сначала проверяем, что направление существует.
-        async with self._session_factory() as session:
-            destination_id = await session.scalar(
-                select(Destination.id).where(Destination.slug == destination)
-            )
+        # Чем меньше число, тем выше приоритет фрагмента.
+        priorities = {
+            "Почему ехать": 0,
+            "С детьми": 1,
+            "С животными": 1,
+            "Когда лучше": 2,
+            "Минусы и риски": 3,
+        }
 
-            if destination_id is None:
+        async with self._session_factory() as session:
+            destination_result = await session.execute(
+                select(Destination).where(Destination.slug == destination)
+            )
+            destination_obj = destination_result.scalar_one_or_none()
+
+            if destination_obj is None:
                 return []
 
-            # Разделы упорядочены по важности для объяснения.
-            headings = ["Почему ехать"]
-
-            if request.party.children_ages:
-                headings.append("С детьми")
-
-            if request.party.pets:
-                headings.append("С животными")
-
-            if request.month is not None:
-                headings.append("Когда лучше")
-
-            headings.append("Минусы и риски")
-
-            # Ищем именно по заголовку, не по полнотекстовому индексу.
-            conditions = [
-                KbChunk.heading_path.ilike(f"% › {heading}")
-                for heading in headings
-            ]
-
-            statement = (
+            # Получаем разделы путеводителя только для нужного направления.
+            guide_result = await session.execute(
                 select(
                     KbChunk,
                     KbDocument.title.label("document_title"),
                     KbDocument.source.label("source"),
+                    KbDocument.doc_type.label("doc_type"),
                 )
-                .join(KbDocument, KbChunk.document_id == KbDocument.id)
+                .join(
+                    KbDocument,
+                    KbChunk.document_id == KbDocument.id,
+                )
                 .where(
-                    KbDocument.destination_id == destination_id,
-                    KbDocument.doc_type == "guide",
-                    or_(*conditions),
+                    KbDocument.destination_id == destination_obj.id,
+                    KbDocument.doc_type != "rules",
                 )
             )
 
-            result = await session.execute(statement)
-            rows = result.all()
+            candidates = []
 
-        # Сохраняем приоритет заголовков, независимо от порядка в БД.
-        priority = {
-            heading: index
-            for index, heading in enumerate(headings)
-        }
+            for row in guide_result.all():
+                heading_path = row[0].heading_path or ""
 
-        hits = [
-            KnowledgeHit(
-                text=row[0].content,
-                title=row.document_title,
-                heading_path=row[0].heading_path,
-                source=row.source,
-                score=float(
-                    priority.get(
-                        (row[0].heading_path or "").split(" › ")[-1],
-                        len(priority),
+                for section, priority in priorities.items():
+                    if heading_path.endswith(f"› {section}"):
+                        # Не добавляем раздел, который не нужен для запроса.
+                        if section == "С детьми" and not request.party.children_ages:
+                            continue
+                        if section == "С животными" and not request.party.pets:
+                            continue
+                        if section == "Когда лучше" and request.month is None:
+                            continue
+
+                        candidates.append(
+                            (
+                                priority,
+                                KnowledgeHit(
+                                    text=row[0].content,
+                                    title=row.document_title,
+                                    heading_path=heading_path,
+                                    source=row.source,
+                                    score=0.0,
+                                ),
+                            )
+                        )
+                        break
+
+            # Общие правила не привязаны к направлению.
+            relevant_tags = set()
+
+            if request.party.pets:
+                relevant_tags.update({"animals", "transport"})
+
+            if request.party.children_ages:
+                relevant_tags.update(
+                    {"children", "documents", "tickets", "family"}
+                )
+
+            if relevant_tags:
+                rules_result = await session.execute(
+                    select(
+                        KbChunk,
+                        KbDocument.title.label("document_title"),
+                        KbDocument.source.label("source"),
                     )
-                ),
-            )
-            for row in rows
-        ]
+                    .join(
+                        KbDocument,
+                        KbChunk.document_id == KbDocument.id,
+                    )
+                    .where(
+                        KbDocument.doc_type == "rules",
+                        KbDocument.destination_id.is_(None),
+                    )
+                )
 
-        hits.sort(key=lambda hit: hit.score)
-        return hits[:limit]
+                for row in rules_result.all():
+                    tags = set(row[0].meta.get("tags", []))
+                    if not tags.intersection(relevant_tags):
+                        continue
+
+                    candidates.append(
+                        (
+                            1,
+                            KnowledgeHit(
+                                text=row[0].content,
+                                title=row.document_title,
+                                heading_path=row[0].heading_path,
+                                source=row.source,
+                                score=0.0,
+                            ),
+                        )
+                    )
+
+        # Стабильная сортировка сохраняет порядок при равном приоритете.
+        candidates.sort(key=lambda item: item[0])
+
+        return [hit for _, hit in candidates[:limit]]

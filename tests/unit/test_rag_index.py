@@ -105,6 +105,66 @@ def test_build_index_adds_new_document_and_chunks(tmp_path):
     session.flush.assert_awaited_once()
 
 
+def test_build_index_adds_general_rules_without_destination(tmp_path):
+    """Общие правила индексируются без привязки к направлению."""
+    rules_dir = tmp_path / "rules"
+    rules_dir.mkdir()
+
+    (rules_dir / "animals.md").write_text(
+        """---
+title: Правила перевозки животных
+doc_type: rules
+destination: null
+months: []
+tags:
+  - animals
+  - transport
+source: synthetic
+---
+
+## В самолёте
+
+Заранее уточните требования перевозчика и подготовьте переноску.
+
+## В поезде
+
+Проверьте условия перевозки животных для выбранного маршрута.
+""",
+        encoding="utf-8",
+    )
+
+    session = make_session(make_result(None))
+
+    asyncio.run(build_index(session, tmp_path))
+
+    added_objects = [
+        call.args[0]
+        for call in session.add.call_args_list
+    ]
+
+    documents = [
+        obj for obj in added_objects
+        if isinstance(obj, KbDocument)
+    ]
+    chunks = [
+        obj for obj in added_objects
+        if isinstance(obj, KbChunk)
+    ]
+
+    assert len(documents) == 1
+    assert documents[0].title == "Правила перевозки животных"
+    assert documents[0].doc_type == "rules"
+    assert documents[0].destination_id is None
+    assert documents[0].source_url == "rules/animals.md"
+    assert documents[0].is_synthetic is True
+
+    assert len(chunks) == 2
+    assert any("В самолёте" in chunk.content for chunk in chunks)
+    assert any("В поезде" in chunk.content for chunk in chunks)
+
+    session.flush.assert_awaited_once()
+
+
 def test_build_index_skips_unchanged_document(tmp_path):
     """Неизменившийся документ повторно не добавляется."""
     content = make_markdown()

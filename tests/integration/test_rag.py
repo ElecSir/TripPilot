@@ -508,3 +508,125 @@ def test_context_returns_empty_for_unknown_destination():
         assert result == []
 
     on_db(scenario)
+
+
+def test_context_includes_general_animal_rules(tmp_path):
+    """При поездке с питомцем контекст содержит общие правила перевозки животных."""
+
+    async def scenario(sessions):
+        slug = f"rag-animals-{uuid.uuid4().hex[:12]}"
+
+        async with sessions() as session:
+            try:
+                await create_destination(session, slug)
+
+                make_document(
+                    tmp_path,
+                    title=f"Путеводитель {slug}",
+                    destination=slug,
+                    body=(
+                        "## Почему ехать\n\n"
+                        "Описание направления.\n\n"
+                        "## С животными\n\n"
+                        "Отдых с питомцами."
+                    ),
+                )
+
+                rules_dir = tmp_path / "rules"
+                rules_dir.mkdir()
+
+                (rules_dir / "animals.md").write_text(
+                    "---\n"
+                    "title: Правила перевозки животных\n"
+                    "doc_type: rules\n"
+                    "destination: null\n"
+                    "months: []\n"
+                    "tags: [animals, transport]\n"
+                    "source: synthetic\n"
+                    "---\n"
+                    "## В самолёте\n\n"
+                    "Проверьте документы и требования к переноске.\n\n"
+                    "## В поезде\n\n"
+                    "Заранее уточните условия перевозки животного.\n",
+                    encoding="utf-8",
+                )
+
+                await build_index(session, tmp_path)
+                await session.commit()
+
+                request = TripRequest(
+                    party=Party(pets=["dog"]),
+                )
+                knowledge_base = PostgresKnowledgeBase(sessions)
+
+                hits = await knowledge_base.context(request, slug)
+
+                assert any(
+                    hit.title == "Правила перевозки животных"
+                    for hit in hits
+                )
+            finally:
+                await session.rollback()
+
+    on_db(scenario)
+
+
+def test_context_includes_general_child_rules(tmp_path):
+    """При поездке с детьми контекст содержит общие правила для детей."""
+
+    async def scenario(sessions):
+        slug = f"rag-children-{uuid.uuid4().hex[:12]}"
+
+        async with sessions() as session:
+            try:
+                await create_destination(session, slug)
+
+                make_document(
+                    tmp_path,
+                    title=f"Путеводитель {slug}",
+                    destination=slug,
+                    body=(
+                        "## Почему ехать\n\n"
+                        "Описание направления.\n\n"
+                        "## С детьми\n\n"
+                        "Советы для семей."
+                    ),
+                )
+
+                rules_dir = tmp_path / "rules"
+                rules_dir.mkdir()
+
+                (rules_dir / "children.md").write_text(
+                    "---\n"
+                    "title: Документы и билеты для детей\n"
+                    "doc_type: rules\n"
+                    "destination: null\n"
+                    "months: []\n"
+                    "tags: [children, documents, tickets]\n"
+                    "source: synthetic\n"
+                    "---\n"
+                    "## Документы ребёнка\n\n"
+                    "Перед поездкой проверьте документы ребёнка.\n\n"
+                    "## Билеты и сопровождение\n\n"
+                    "Уточните правила оформления детского билета.\n",
+                    encoding="utf-8",
+                )
+
+                await build_index(session, tmp_path)
+                await session.commit()
+
+                request = TripRequest(
+                    party=Party(children_ages=[7]),
+                )
+                knowledge_base = PostgresKnowledgeBase(sessions)
+
+                hits = await knowledge_base.context(request, slug)
+
+                assert any(
+                    hit.title == "Документы и билеты для детей"
+                    for hit in hits
+                )
+            finally:
+                await session.rollback()
+
+    on_db(scenario)

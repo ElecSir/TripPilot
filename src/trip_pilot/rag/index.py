@@ -19,19 +19,22 @@ log = logging.getLogger(__name__)
 
 async def build_index(session: AsyncSession, knowledge_dir: Path) -> None:
     """Загрузить Markdown-документы и их фрагменты в kb_document / kb_chunk."""
-    paths = sorted(knowledge_dir.glob("*.md")) if knowledge_dir.is_dir() else []
+    paths = sorted(knowledge_dir.rglob("*.md")) if knowledge_dir.is_dir() else []
 
     if not knowledge_dir.is_dir():
         log.info("RAG: папка знаний %s не найдена, индексация пропущена", knowledge_dir)
         return
 
     # Удаляем из индекса документы, файлы которых больше не существуют.
-    current_filenames = {path.name for path in paths}
+    current_filenames = {
+        path.relative_to(knowledge_dir).as_posix()
+        for path in paths
+    }
 
     indexed_result = await session.execute(
         select(KbDocument).where(
             KbDocument.source_url.is_not(None),
-            KbDocument.doc_type == "destination",
+            KbDocument.doc_type.in_(["destination", "rules"]),
         )
     )
     indexed_documents = indexed_result.scalars().all()
@@ -57,25 +60,39 @@ async def build_index(session: AsyncSession, knowledge_dir: Path) -> None:
         title = metadata["title"]
         doc_type = metadata["doc_type"]
         destination_slug = metadata["destination"]
+        destination = None
 
-        destination_result = await session.execute(
-            select(Destination).where(Destination.slug == destination_slug)
-        )
-        destination = destination_result.scalar_one_or_none()
-
-        if destination is None:
-            raise ValueError(
-                f"Направление {destination_slug!r} из файла {path} "
-                "не найдено в таблице destination"
+        if destination_slug is not None:
+            destination_result = await session.execute(
+                select(Destination).where(Destination.slug == destination_slug)
             )
+            destination = destination_result.scalar_one_or_none()
+
+            if destination is None:
+                raise ValueError(
+                    f"Направление {destination_slug!r} из файла {path} "
+                    "не найдено в таблице destination"
+                )
+        elif doc_type != "rules":
+            raise ValueError(
+                f"Документ {path} без destination должен иметь doc_type='rules'"
+            )
+
+        source_url = path.relative_to(knowledge_dir).as_posix()
+
+        destination_condition = (
+            KbDocument.destination_id.is_(None)
+            if destination is None
+            else KbDocument.destination_id == destination.id
+        )
 
         document_result = await session.execute(
             select(KbDocument).where(
                 or_(
-                    KbDocument.source_url == path.name,
+                    KbDocument.source_url == source_url,
                     (
                         KbDocument.source_url.is_(None)
-                        & (KbDocument.destination_id == destination.id)
+                        & destination_condition
                         & (KbDocument.doc_type == doc_type)
                         & (KbDocument.source == metadata["source"])
                     ),
@@ -93,10 +110,10 @@ async def build_index(session: AsyncSession, knowledge_dir: Path) -> None:
 
         if document is not None:
             document.source = metadata["source"]
-            document.source_url = path.name
+            document.source_url = source_url
             document.title = title
             document.doc_type = doc_type
-            document.destination_id = destination.id
+            document.destination_id = destination.id if destination else None
             document.is_synthetic = metadata["source"] == "synthetic"
 
         if document is not None and document.content_hash == content_hash:
@@ -109,10 +126,10 @@ async def build_index(session: AsyncSession, knowledge_dir: Path) -> None:
             document = KbDocument(
                 id=uuid.uuid4(),
                 source=metadata["source"],
-                source_url=path.name,
+                source_url=source_url,
                 title=title,
                 doc_type=doc_type,
-                destination_id=destination.id,
+                destination_id=destination.id if destination else None,
                 is_synthetic=metadata["source"] == "synthetic",
                 content_hash=content_hash,
             )
@@ -124,8 +141,8 @@ async def build_index(session: AsyncSession, knowledge_dir: Path) -> None:
                 delete(KbChunk).where(KbChunk.document_id == document.id)
             )
             document.source = metadata["source"]
-            document.source_url = path.name
-            document.destination_id = destination.id
+            document.source_url = source_url
+            document.destination_id = destination.id if destination else None
             document.is_synthetic = metadata["source"] == "synthetic"
             document.content_hash = content_hash
             document.title = title

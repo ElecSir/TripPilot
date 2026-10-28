@@ -79,12 +79,39 @@ _ALIASES = {
     ),
     "kazan": ("казань", "казани"),
     "antalya": ("анталья", "анталью", "антальи", "анталия", "анталию"),
+    "anapa": ("анапа", "анапу", "анапы", "анапе"),
+    "kaliningrad": ("калининград", "калининграда", "калининграде"),
+    "murmansk": ("мурманск", "мурманска", "мурманске"),
+    "dubai": ("дубай", "дубая", "дубае"),
+    "sharm": (
+        "шарм",
+        "шарма",
+        "шарме",
+        "шарм-эль-шейх",
+        "шарм-эль-шейха",
+        "шарм эль шейх",
+        "шарм эль шейха",
+    ),
+    "phuket": ("пхукет", "пхукета", "пхукете"),
+    "nha-trang": ("нячанг", "нячанга", "нячанге", "нья-чанг", "нья чанг"),
 }
+# Страны: ключ — название из каталога в нижнем регистре, значения — падежные формы.
+_COUNTRY_FORMS = {
+    "россия": ("россию", "россии", "рф"),
+    "турция": ("турцию", "турции"),
+    "оаэ": ("эмираты", "эмиратах", "эмиратов", "арабские эмираты"),
+    "египет": ("египта", "египте"),
+    "таиланд": ("таиланда", "таиланде", "тайланд", "тайланда", "тай"),
+    "вьетнам": ("вьетнама", "вьетнаме"),
+}
+_COUNTRY_FUZZY = 80  # опечатки в названии страны («турцмю»)
+_CLOSE_MISS = 65  # слово после «в» настолько похоже на город, что это опечатка, а не «в начале»
 _CITY_NOISE = {
     "море",
     "морю",
     "город",
     "горы",
+    "майские",
     "теплое",
     "теплому",
     "теплые",
@@ -141,15 +168,20 @@ def month_number(word: str) -> int | None:
     return _MONTH_NUMBERS.get(normalize(word))
 
 
-def resolve_city(raw: str, catalog: list[Destination]) -> Result[str, DomainError]:
-    """Алиасы действуют только для городов из переданного каталога."""
-    value = normalize(raw).strip(" .,!?")
+def _scores(value: str, catalog: list[Destination]) -> dict[str, float]:
     scores = {}
     for city in catalog:
         aliases = [city.name, city.slug, *_ALIASES.get(city.slug, ())]
         if city.iata:
             aliases.append(city.iata)
         scores[city.slug] = max(ratio(value, normalize(alias)) for alias in aliases)
+    return scores
+
+
+def resolve_city(raw: str, catalog: list[Destination]) -> Result[str, DomainError]:
+    """Алиасы действуют только для городов из переданного каталога."""
+    value = normalize(raw).strip(" .,!?")
+    scores = _scores(value, catalog)
     if not scores or max(scores.values()) < 80:
         return Failure(UnknownCity(raw))
     best = max(scores.values())
@@ -159,10 +191,61 @@ def resolve_city(raw: str, catalog: list[Destination]) -> Result[str, DomainErro
     return Success(candidates[0])
 
 
-def _cities(text: str, catalog: list[Destination]) -> Result[dict, DomainError]:
+def _country_slugs(value: str, catalog: list[Destination]) -> tuple[str, ...]:
+    """Направления страны из каталога, если значение — название страны в любом падеже."""
+    for country in dict.fromkeys(normalize(city.country) for city in catalog):
+        forms = (country, *_COUNTRY_FORMS.get(country, ()))
+        if any(
+            value == form or (len(value) >= 5 and ratio(value, form) >= _COUNTRY_FUZZY)
+            for form in forms
+        ):
+            return tuple(city.slug for city in catalog if normalize(city.country) == country)
+    return ()
+
+
+def resolve_place(raw: str, catalog: list[Destination]) -> Result[str, DomainError]:
+    """Куда: страна даёт её направления из каталога (одно — slug, несколько — AmbiguousCity)."""
+    value = normalize(raw).strip(" .,!?")
+    slugs = _country_slugs(value, catalog)
+    if len(slugs) == 1:
+        return Success(slugs[0])
+    if slugs:
+        return Failure(AmbiguousCity(raw, slugs))
+    return resolve_city(raw, catalog)
+
+
+def _capitalized(text: str) -> set[str]:
+    """Слова, написанные с заглавной: «в Урюпинск» — название места, а не «в начале»."""
+    return {normalize(word) for word in re.findall(r"[А-ЯЁA-Z][а-яёa-z-]*", text)}
+
+
+def _resolve_phrase(
+    words: list[str], catalog: list[Destination], *, origin: bool, capitalized: set[str]
+) -> Result[str, DomainError] | None:
+    """Success или Failure по названию. None: слова не похожи на город, их пропускаем."""
+    resolve = resolve_city if origin else resolve_place
+    result = None
+    for length in range(len(words), 0, -1):
+        result = resolve(" ".join(words[:length]), catalog)
+        if isinstance(result, Success) or isinstance(result.failure(), AmbiguousCity):
+            return result
+    if origin:  # «из …» без города — ошибка, пропускать нельзя
+        return result
+    close = any(
+        max(_scores(" ".join(words[:length]), catalog).values(), default=0) >= _CLOSE_MISS
+        for length in range(1, len(words) + 1)
+    )
+    if close or words[0] in capitalized:
+        return Failure(UnknownCity(words[0]))
+    return None
+
+
+def _cities(
+    text: str, catalog: list[Destination], capitalized: set[str] | None = None
+) -> Result[dict, DomainError]:
     patch = {}
     # Lookahead позволяет увидеть и «из Москвы», и следующее «в Сочи».
-    pattern = r"(?=\b(из|в|во)\s+([а-яa-z][а-яa-z-]*(?:\s+[а-яa-z][а-яa-z-]*){0,2}))"
+    pattern = r"(?=\b(из|в|во|на)\s+([а-яa-z][а-яa-z-]*(?:\s+[а-яa-z][а-яa-z-]*){0,2}))"
     for match in re.finditer(pattern, text):
         marker, phrase = match.groups()
         words = phrase.split()
@@ -174,11 +257,11 @@ def _cities(text: str, catalog: list[Destination]) -> Result[dict, DomainError]:
                 break
         if not words:
             continue
-        result = resolve_city(" ".join(words), catalog)
-        for length in range(len(words) - 1, 0, -1):
-            if isinstance(result, Success):
-                break
-            result = resolve_city(" ".join(words[:length]), catalog)
+        result = _resolve_phrase(
+            words, catalog, origin=marker == "из", capitalized=capitalized or set()
+        )
+        if result is None:
+            continue
         if isinstance(result, Failure):
             return result
         patch["origin" if marker == "из" else "destination"] = result.unwrap()
@@ -189,32 +272,49 @@ def _number(raw: str) -> int:
     return int(raw) if raw.isdigit() else _NUMBERS[raw]
 
 
+def _future_date(day: int, month: int, year: int | None, today: date) -> date:
+    """Дата без года, уже прошедшая в текущем году, переносится на следующий."""
+    y = year if year is not None else today.year
+    candidate = date(y, month, day)
+    if year is None and candidate < today:
+        candidate = date(y + 1, month, day)
+    return candidate
+
+
 def parse_when(text: str, today: date) -> dict[str, Any] | None:
     """Разбирает названные даты; проверку прошлого выполняет вызывающая функция."""
     text = normalize(text)
     if match := re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text):
         return {"date_from": date.fromisoformat(match[1]), "month": None}
     if match := re.search(r"\b(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\b", text):
+        year = int(match[3]) if match[3] else None
         return {
-            "date_from": date(int(match[3] or today.year), int(match[2]), int(match[1])),
+            "date_from": _future_date(int(match[1]), int(match[2]), year, today),
             "month": None,
         }
+    # «с 5 по 12 декабря» и «с 5 до 12 декабря»; «до» не должно уходить в бюджет.
     range_pattern = (
-        rf"\bс\s+(\d{{1,2}})\s*({_MONTH_PATTERN})?\s*по\s+(\d{{1,2}})\s*"
+        rf"\bс\s+(\d{{1,2}})\s*({_MONTH_PATTERN})?\s*(?:по|до)\s+(\d{{1,2}})\s*"
         rf"({_MONTH_PATTERN})(?:\s+(\d{{4}}))?\b"
     )
     if match := re.search(range_pattern, text):
-        start_day, start_name, end_day, end_name, year = match.groups()
+        start_day, start_name, end_day, end_name, year_raw = match.groups()
         end_month = month_number(end_name)
         start_month = month_number(start_name) if start_name else end_month
-        start = date(int(year or today.year), start_month, int(start_day))
+        year = int(year_raw) if year_raw else None
+        start = _future_date(int(start_day), start_month, year, today)
         end_year = start.year + (end_month < start_month)
         end = date(end_year, end_month, int(end_day))
         return {"date_from": start, "month": None, "nights": (end - start).days}
     if match := re.search(rf"\b(\d{{1,2}})\s+({_MONTH_PATTERN})(?:\s+(\d{{4}}))?\b", text):
-        start = date(int(match[3] or today.year), month_number(match[2]), int(match[1]))
+        year = int(match[3]) if match[3] else None
+        start = _future_date(int(match[1]), month_number(match[2]), year, today)
         return {"date_from": start, "month": None}
-    if match := re.search(r"\bчерез\s+(\d+|одну|две|два|три)\s+(недел\w*|дн\w*|день)\b", text):
+    if match := re.search(
+        r"\bчерез\s+(\d+|один|одну|две|два|три|четыре|пять|семь|десять)\s+"
+        r"(недел\w*|дн\w*|день)\b",
+        text,
+    ):
         days = _number(match[1]) * (7 if match[2].startswith("недел") else 1)
         return {"date_from": today + timedelta(days=days), "month": None}
     for word, days in (("послезавтра", 2), ("завтра", 1)):
@@ -231,8 +331,13 @@ def parse_when(text: str, today: date) -> dict[str, Any] | None:
 def _duration(text: str) -> int | None:
     if re.search(r"\b(?:позже|раньше)\b", text):
         return None
-    if match := re.search(r"\bна\s+(\d+|одну|две|два|три|семь|десять)\s+(дн\w*|день|ноч\w*)", text):
-        return _number(match[1])
+    word_num = r"\d+|один|одну|одна|два|две|двух|три|трех|четыре|пять|семь|десять"
+    if match := re.search(
+        rf"\bна\s+({word_num})\s+(недел\w*|дн\w*|день|ноч\w*)", text
+    ):
+        unit = match[2]
+        n = _number(match[1])
+        return n * 7 if unit.startswith("недел") else n
     if re.search(r"\bна\s+неделю\b", text):
         return 7
     if re.search(r"\bна\s+выходные\b", text):
@@ -250,7 +355,10 @@ def _budget(text: str) -> Decimal | None:
         if not marker and not unit:
             continue
         tail = text[match.end() :].lstrip()
-        if tail.startswith(("лет", "год", "ноч", "дн", "день")):
+        # «до 12 декабря» / «до 2 лет» — не бюджет
+        if tail.startswith(("лет", "год", "ноч", "дн", "день")) or month_number(
+            tail.split()[0] if tail else ""
+        ):
             continue
         amount = Decimal(raw.replace(" ", "").replace("\u00a0", "").replace(",", "."))
         if unit and unit.startswith(("к", "k", "тыс")):
@@ -271,7 +379,8 @@ def _party(text: str, current: TripRequest) -> tuple[dict, list[str], set[str]]:
         for pattern, count in (
             (r"\bвдвоем\b|\bс мужем\b|\bс женой\b", 2),
             (r"\bвтроем\b", 3),
-            (r"\bодна\b|\bодин\b", 1),
+            # «один/одна» — состав, но не перед «день/ночь/неделю» («на один день позже»)
+            (r"\b(?:одна|один)\b(?!\s+(?:дн\w*|день|ноч\w*|недел\w*))", 1),
         ):
             if re.search(pattern, text):
                 adults = count
@@ -279,7 +388,9 @@ def _party(text: str, current: TripRequest) -> tuple[dict, list[str], set[str]]:
     if adults is not None:
         party["adults"] = adults
         fields.add("adults")
-    child = re.search(r"\b(?:ребен\w*|детьми|дети|детей)\b", text)
+    # «отель для детей» и «детский отель» — требование к отелю, а не состав поездки:
+    # ребёнка в такой фразе нет, поэтому состав не трогаем.
+    child = re.search(r"(?<!для )\b(?:ребен\w*|детьми|дети|детей)\b", text)
     if child:
         ages = re.search(r"(\d+(?:\s*(?:,|и)\s*\d+)*)\s*(?:лет|года?|год)\b", text[child.end() :])
         is_range = re.search(r"\bдо\s+\d+\s*(?:лет|год)", text[child.end() :])
@@ -355,7 +466,7 @@ def parse_request(
     """Новое сообщение дополняет базу; месяцу не назначаются даты поиска."""
     current = base or TripRequest()
     low = normalize(text)
-    cities = _cities(low, catalog)
+    cities = _cities(low, catalog, _capitalized(text))
     if isinstance(cities, Failure):
         return cities
     patch = cities.unwrap()
@@ -449,7 +560,10 @@ def parse_change(text: str, current: TripRequest, *, today: date) -> dict[str, A
         patch.update(parse_when(low, today) or {})
         if budget := _budget(low):
             patch["budget"] = budget
-        elif "бюджет меньше" in low and current.budget is not None:
+        elif (
+            re.search(r"\b(?:бюджет\s+меньше|подешевле|дешевле)\b", low)
+            and current.budget is not None
+        ):
             patch["budget"] = (current.budget * Decimal("0.8")).quantize(Decimal("0.01"))
             extra.append(
                 Assumption(

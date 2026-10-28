@@ -134,7 +134,14 @@ def test_long_wait_after_check_out():
     issues = check_package(package)
     assert len(issues) == 1
     assert "камера хранения" in issues[0]
-    assert "5.5" in issues[0]
+    assert "5 ч 30 мин" in issues[0]
+    assert "5.5" not in issues[0]  # без дробных часов с точкой
+
+
+def test_long_wait_is_written_in_hours_and_minutes():
+    # в аэропорт выезжать в 17:50, выезд из номера в 12:00: ждать 5 ч 50 мин
+    package = _package(_msk(10, 15), _msk(15, 20, 20), date(2026, 11, 10), date(2026, 11, 15))
+    assert "5 ч 50 мин" in check_package(package)[0]
 
 
 def test_wait_of_exactly_four_hours_is_fine():

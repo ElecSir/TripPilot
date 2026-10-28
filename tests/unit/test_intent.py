@@ -9,6 +9,7 @@ from returns.result import Failure, Success
 from tests.fakes import DESTINATIONS
 from trip_pilot.agent.intent import parse_change, parse_request, resolve_city
 from trip_pilot.domain.errors import AmbiguousCity, DatesInPast, NoResults, UnknownCity
+from trip_pilot.domain.offers import Destination
 from trip_pilot.domain.request import Assumption, Party, TripRequest
 
 TODAY = date(2026, 10, 25)
@@ -36,9 +37,13 @@ PHRASES = [
     ("в октябре", {"month": 10}),
     ("на майские", {"month": 5, "date_from": None}),
     ("с 5 по 12 декабря", {"date_from": date(2026, 12, 5), "nights": 7}),
+    ("с 5 до 12 декабря", {"date_from": date(2026, 12, 5), "nights": 7}),
     ("с 28 декабря по 4 января", {"date_from": date(2026, 12, 28), "nights": 7}),
     ("с 5 по 12 декабря 2027", {"date_from": date(2027, 12, 5), "nights": 7}),
     ("5 ноября", {"date_from": date(2026, 11, 5)}),
+    # Прошедшая дата без года → следующий год (сегодня 2026-10-25)
+    ("15 марта", {"date_from": date(2027, 3, 15)}),
+    ("с 3 по 10 января", {"date_from": date(2027, 1, 3), "nights": 7}),
     ("2026-11-14", {"date_from": date(2026, 11, 14)}),
     ("14.11.2026", {"date_from": date(2026, 11, 14)}),
     ("через две недели", {"date_from": date(2026, 11, 8)}),
@@ -48,6 +53,8 @@ PHRASES = [
     ("на выходные", {"nights": 2}),
     ("на 10 дней", {"nights": 10}),
     ("на 3 ночи", {"nights": 3}),
+    ("на две недели", {"nights": 14}),
+    ("на пять дней", {"nights": 5}),
     ("из Москвы", {"origin": "moscow"}),
     ("из Питера", {"origin": "spb"}),
     ("из СПб", {"origin": "spb"}),
@@ -118,6 +125,24 @@ def test_past_dates_return_domain_error(text):
     assert isinstance(result.failure(), DatesInPast)
 
 
+def test_past_date_without_year_rolls_to_next_year():
+    """«15 марта» и «15.03» в октябре → март следующего года, а не DatesInPast."""
+    for text in ("15 марта", "15.03"):
+        result = parse_request(text, catalog=CATALOG, today=TODAY)
+        assert isinstance(result, Success), result
+        assert result.unwrap().date_from == date(2027, 3, 15)
+
+
+def test_range_with_do_is_not_budget():
+    """«с 5 до 12 декабря» — диапазон дат, а не бюджет 12 ₽."""
+    result = parse_request("с 5 до 12 декабря", catalog=CATALOG, today=TODAY)
+    assert isinstance(result, Success), result
+    request = result.unwrap()
+    assert request.date_from == date(2026, 12, 5)
+    assert request.nights == 7
+    assert request.budget is None
+
+
 @pytest.mark.parametrize("text", ["31 ноября", "на 0 ночей", "на 31 день", "бюджет 0"])
 def test_invalid_input_returns_failure_instead_of_exception(text):
     result = parse_request(text, catalog=CATALOG, today=TODAY)
@@ -169,11 +194,17 @@ def test_default_party_and_qualitative_budget_are_transparent():
     [
         ("на два дня позже", {"date_from": date(2026, 11, 9)}),
         ("на 3 дня раньше", {"date_from": date(2026, 11, 4)}),
+        # «на один день позже» — сдвиг даты, взрослые не меняются
+        ("на один день позже", {"date_from": date(2026, 11, 8), "party.adults": 3}),
         ("бюджет меньше", {"budget": Decimal("120000.00")}),
+        ("подешевле", {"budget": Decimal("120000.00")}),
+        ("дешевле", {"budget": Decimal("120000.00")}),
         ("до 100к", {"budget": Decimal("100000")}),
         ("без пересадок", {"must": ["kids_friendly", "direct_only"]}),
         ("с нами едет собака", {"party": Party(adults=3, children_ages=[5], pets=["dog"])}),
         ("а в декабре?", {"month": 12, "date_from": None}),
+        ("на две недели", {"nights": 14}),
+        ("на пять дней", {"nights": 5}),
     ],
 )
 def test_change_patch_uses_current_values(text, expected):
@@ -191,7 +222,7 @@ def test_change_patch_uses_current_values(text, expected):
     for path, value in expected.items():
         assert field_value(updated, path) == value
     assert current.model_dump() == before
-    if text == "бюджет меньше":
+    if text in ("бюджет меньше", "подешевле", "дешевле"):
         assert any(item.field == "budget" and item.reason for item in updated.assumptions)
 
 
@@ -259,3 +290,97 @@ def test_child_count_and_old_age_assumptions_are_handled_explicitly():
     ).unwrap()
     assert updated.party.children_ages == [5, 8]
     assert [item.field for item in updated.assumptions] == ["party"]
+
+
+# Каталог из 12 направлений (как в data/reference/destinations.json): страны, алиасы, «на».
+FULL_CATALOG = [
+    Destination(
+        slug=slug, name=name, country=country, iata=iata, lat=0.0, lon=0.0,
+        timezone="Europe/Moscow",
+    )
+    for slug, name, country, iata in [
+        ("moscow", "Москва", "Россия", "MOW"),
+        ("spb", "Санкт-Петербург", "Россия", "LED"),
+        ("kazan", "Казань", "Россия", "KZN"),
+        ("sochi", "Сочи", "Россия", "AER"),
+        ("anapa", "Анапа", "Россия", "AAQ"),
+        ("kaliningrad", "Калининград", "Россия", "KGD"),
+        ("murmansk", "Мурманск", "Россия", "MMK"),
+        ("antalya", "Анталья", "Турция", "AYT"),
+        ("dubai", "Дубай", "ОАЭ", "DXB"),
+        ("sharm", "Шарм-эль-Шейх", "Египет", "SSH"),
+        ("phuket", "Пхукет", "Таиланд", "HKT"),
+        ("nha-trang", "Нячанг", "Вьетнам", "CXR"),
+    ]
+]
+RUSSIA = {"moscow", "spb", "kazan", "sochi", "anapa", "kaliningrad", "murmansk"}
+
+# Фразы из ревью PR #13, часть «города»: страны, алиасы всех направлений, предлог «на»,
+# слова после «в», которые не города.
+CITY_PHRASES = [
+    ("Хочу на море в Турцию в ноябре", {"destination": "antalya", "month": 11, "tags": ["sea"]}),
+    ("во Вьетнам", {"destination": "nha-trang"}),
+    ("в Египет", {"destination": "sharm"}),
+    ("в Таиланд", {"destination": "phuket"}),
+    ("в ОАЭ", {"destination": "dubai"}),
+    ("в Эмираты", {"destination": "dubai"}),
+    ("в турцмю", {"destination": "antalya"}),
+    ("в Шарм", {"destination": "sharm"}),
+    ("в Шарм-эль-Шейх", {"destination": "sharm"}),
+    ("на Пхукет", {"destination": "phuket"}),
+    ("в Дубай", {"destination": "dubai"}),
+    ("в Нячанг", {"destination": "nha-trang"}),
+    ("в Анапу", {"destination": "anapa"}),
+    ("в Калининград", {"destination": "kaliningrad"}),
+    ("в Мурманск", {"destination": "murmansk"}),
+    ("в Казань", {"destination": "kazan"}),
+    ("в Питер", {"destination": "spb"}),
+    ("на Сочи", {"destination": "sochi"}),
+    ("в начале декабря", {"month": 12, "destination": None}),
+    ("в конце ноября", {"month": 11, "destination": None}),
+    ("в бюджете 100к", {"budget": Decimal("100000"), "destination": None}),
+    ("в рамках бюджета до 90к", {"budget": Decimal("90000"), "destination": None}),
+    ("из Москвы в начале декабря", {"origin": "moscow", "month": 12, "destination": None}),
+    ("на два дня в Сочи", {"destination": "sochi"}),
+]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"), CITY_PHRASES, ids=[text for text, _ in CITY_PHRASES]
+)
+def test_country_alias_and_non_city_phrases(text, expected):
+    result = parse_request(text, catalog=FULL_CATALOG, today=TODAY)
+    assert isinstance(result, Success), result
+    request = result.unwrap()
+    for path, value in expected.items():
+        assert field_value(request, path) == value
+
+
+def test_country_with_several_destinations_is_ambiguous():
+    for text in ["в Россию", "хочу в России"]:
+        result = parse_request(text, catalog=FULL_CATALOG, today=TODAY)
+        assert isinstance(result, Failure)
+        error = result.failure()
+        assert isinstance(error, AmbiguousCity)
+        assert set(error.candidates) == RUSSIA
+
+
+@pytest.mark.parametrize("text", ["в Сочт", "Хочу в Урюпинск", "из Урюпинска"])
+def test_close_miss_and_named_unknown_place_still_fail(text):
+    result = parse_request(text, catalog=FULL_CATALOG, today=TODAY)
+    assert isinstance(result, Failure)
+    assert isinstance(result.failure(), UnknownCity)
+
+
+def test_country_outside_catalog_is_not_invented():
+    # Вьетнама нет в каталоге из трёх городов: страна не превращается в чужой город
+    result = parse_request("во Вьетнам", catalog=DESTINATIONS, today=TODAY)
+    assert isinstance(result, Failure)
+    assert isinstance(result.failure(), UnknownCity)
+
+def test_hotel_for_children_is_a_requirement_not_a_child():
+    """«отель для детей» — про отель: состав поездки не меняется, ребёнка не выдумываем."""
+    for text in ("отель для детей", "детский отель"):
+        request = parse_request(text, catalog=CATALOG, today=TODAY).unwrap()
+        assert "kids_friendly" in request.must
+        assert request.party.children_ages == []

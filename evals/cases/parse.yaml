@@ -1,0 +1,392 @@
+- text: из Москвы в Сочи
+  today: '2026-10-26'
+  expect:
+    origin: moscow
+    destination: sochi
+- text: из Питера в Анталью
+  today: '2026-10-26'
+  expect:
+    origin: spb
+    destination: antalya
+- text: из СПб в Сочи
+  today: '2026-10-26'
+  expect:
+    origin: spb
+    destination: sochi
+- text: в Анталью
+  today: '2026-10-26'
+  expect:
+    destination: antalya
+- text: из Казани в Сочи
+  today: '2026-10-26'
+  expect:
+    origin: kazan
+    destination: sochi
+- text: из Москвы в Санкт-Петербург
+  today: '2026-10-26'
+  expect:
+    origin: moscow
+    destination: spb
+- text: в Сочи из Москвы
+  today: '2026-10-26'
+  expect:
+    origin: moscow
+    destination: sochi
+- text: из Масквы в Сочи
+  today: '2026-10-26'
+  expect:
+    origin: moscow
+    destination: sochi
+- text: в Турцию
+  today: '2026-10-26'
+  expect:
+    destination: antalya
+- text: в Египет
+  today: '2026-10-26'
+  expect:
+    destination: sharm
+- text: в Таиланд
+  today: '2026-10-26'
+  expect:
+    destination: phuket
+- text: во Вьетнам
+  today: '2026-10-26'
+  expect:
+    destination: nha-trang
+- text: в Дубай
+  today: '2026-10-26'
+  expect:
+    destination: dubai
+- text: в Анапу
+  today: '2026-10-26'
+  expect:
+    destination: anapa
+- text: в Мурманск
+  today: '2026-10-26'
+  expect:
+    destination: murmansk
+- text: в Калининград
+  today: '2026-10-26'
+  expect:
+    destination: kaliningrad
+- text: в начале декабря
+  today: '2026-10-26'
+  expect:
+    month: 12
+- text: в конце ноября
+  today: '2026-10-26'
+  expect:
+    month: 11
+- text: в бюджете 100к
+  today: '2026-10-26'
+  expect:
+    budget: '100000'
+- text: в Шарм
+  today: '2026-10-26'
+  expect:
+    destination: sharm
+- text: на Пхукет
+  today: '2026-10-26'
+  expect:
+    destination: phuket
+- text: 15 марта
+  today: '2026-10-26'
+  expect:
+    date_from: '2027-03-15'
+- text: с 3 по 10 января
+  today: '2026-10-26'
+  expect:
+    date_from: '2027-01-03'
+    nights: 7
+- text: с 5 до 12 декабря
+  today: '2026-10-26'
+  expect:
+    date_from: '2026-12-05'
+    nights: 7
+- text: с 5 по 12 декабря
+  today: '2026-10-26'
+  expect:
+    date_from: '2026-12-05'
+    nights: 7
+- text: с 28 декабря по 4 января
+  today: '2026-10-26'
+  expect:
+    date_from: '2026-12-28'
+    nights: 7
+- text: с 5 по 12 декабря 2027
+  today: '2026-10-26'
+  expect:
+    date_from: '2027-12-05'
+    nights: 7
+- text: '2026-11-14'
+  today: '2026-10-26'
+  expect:
+    date_from: '2026-11-14'
+- text: 14.11.2026
+  today: '2026-10-26'
+  expect:
+    date_from: '2026-11-14'
+- text: 5 ноября
+  today: '2026-10-26'
+  expect:
+    date_from: '2026-11-05'
+- text: через две недели
+  today: '2026-10-26'
+  expect:
+    date_from: '2026-11-09'
+- text: через 3 дня
+  today: '2026-10-26'
+  expect:
+    date_from: '2026-10-29'
+- text: завтра
+  today: '2026-10-26'
+  expect:
+    date_from: '2026-10-27'
+- text: на неделю
+  today: '2026-10-26'
+  expect:
+    nights: 7
+- text: на выходные
+  today: '2026-10-26'
+  expect:
+    nights: 2
+- text: на 10 дней
+  today: '2026-10-26'
+  expect:
+    nights: 10
+- text: на 3 ночи
+  today: '2026-10-26'
+  expect:
+    nights: 3
+- text: на две недели
+  today: '2026-10-26'
+  expect:
+    nights: 14
+- text: на пять дней
+  today: '2026-10-26'
+  expect:
+    nights: 5
+- text: в декабре
+  today: '2026-10-26'
+  expect:
+    month: 12
+- text: в ноябре
+  today: '2026-10-26'
+  expect:
+    month: 11
+- text: на майские
+  today: '2026-10-26'
+  expect:
+    month: 5
+- text: втроём
+  today: '2026-10-26'
+  expect:
+    adults: 3
+- text: одна
+  today: '2026-10-26'
+  expect:
+    adults: 1
+- text: один
+  today: '2026-10-26'
+  expect:
+    adults: 1
+- text: 3 взрослых
+  today: '2026-10-26'
+  expect:
+    adults: 3
+- text: с ребёнком 5 лет
+  today: '2026-10-26'
+  expect:
+    children_ages:
+    - 5
+- text: с детьми 5 и 8 лет
+  today: '2026-10-26'
+  expect:
+    children_ages:
+    - 5
+    - 8
+- text: с ребёнком
+  today: '2026-10-26'
+  expect:
+    children_ages:
+    - null
+- text: с детьми
+  today: '2026-10-26'
+  expect:
+    children_ages:
+    - null
+- text: с собакой
+  today: '2026-10-26'
+  expect:
+    must:
+    - pets_allowed
+    pets:
+    - dog
+- text: с котом
+  today: '2026-10-26'
+  expect:
+    must:
+    - pets_allowed
+    pets:
+    - cat
+- text: с собакой и котом
+  today: '2026-10-26'
+  expect:
+    must:
+    - pets_allowed
+    pets:
+    - dog
+    - cat
+- text: до 150 000
+  today: '2026-10-26'
+  expect:
+    budget: '150000'
+- text: 150к
+  today: '2026-10-26'
+  expect:
+    budget: '150000'
+- text: тысяч 100
+  today: '2026-10-26'
+  expect:
+    budget: '100000'
+- text: бюджет 100 тысяч
+  today: '2026-10-26'
+  expect:
+    budget: '100000'
+- text: до 150,5к
+  today: '2026-10-26'
+  expect:
+    budget: '150500'
+- text: бюджет 120000 рублей
+  today: '2026-10-26'
+  expect:
+    budget: '120000'
+- text: до 100к
+  today: '2026-10-26'
+  expect:
+    budget: '100000'
+- text: без пересадок
+  today: '2026-10-26'
+  expect:
+    must:
+    - direct_only
+- text: отель для детей
+  today: '2026-10-26'
+  expect:
+    must:
+    - kids_friendly
+- text: Хочу на море в Турцию в ноябре вдвоём с ребёнком 5 лет
+  today: '2026-10-26'
+  expect:
+    destination: antalya
+    month: 11
+    tags:
+    - sea
+    children_ages:
+    - 5
+- text: из Питера в Сочи в ноябре на неделю вдвоём до 150к
+  today: '2026-10-26'
+  expect:
+    origin: spb
+    destination: sochi
+    month: 11
+    nights: 7
+    budget: '150000'
+- text: хочу в горы в марте с ребёнком
+  today: '2026-10-26'
+  expect:
+    month: 3
+    tags:
+    - nature
+    children_ages:
+    - null
+- text: на море в декабре с собакой до 100к
+  today: '2026-10-26'
+  expect:
+    month: 12
+    budget: '100000'
+    tags:
+    - sea
+    must:
+    - pets_allowed
+    pets:
+    - dog
+- text: с ребёнком до 2 лет
+  today: '2026-10-26'
+  expect:
+    children_ages:
+    - null
+- text: на два дня позже
+  today: '2026-10-26'
+  base:
+    date_from: '2026-11-07'
+    nights: 7
+  expect:
+    date_from: '2026-11-09'
+- text: на 3 дня раньше
+  today: '2026-10-26'
+  base:
+    date_from: '2026-11-07'
+    nights: 7
+  expect:
+    date_from: '2026-11-04'
+- text: на один день позже
+  today: '2026-10-26'
+  base:
+    date_from: '2026-11-07'
+    nights: 7
+  expect:
+    date_from: '2026-11-08'
+- text: на две недели
+  today: '2026-10-26'
+  base:
+    date_from: '2026-11-07'
+    nights: 7
+  expect:
+    nights: 14
+- text: на пять дней
+  today: '2026-10-26'
+  base:
+    date_from: '2026-11-07'
+    nights: 7
+  expect:
+    nights: 5
+- text: бюджет меньше
+  today: '2026-10-26'
+  base:
+    budget: '150000'
+  expect:
+    budget: '120000'
+- text: подешевле
+  today: '2026-10-26'
+  base:
+    budget: '150000'
+  expect:
+    budget: '120000'
+- text: дешевле
+  today: '2026-10-26'
+  base:
+    budget: '150000'
+  expect:
+    budget: '120000'
+- text: до 100к
+  today: '2026-10-26'
+  base:
+    budget: '150000'
+  expect:
+    budget: '100000'
+- text: без пересадок
+  today: '2026-10-26'
+  base:
+    must:
+    - kids_friendly
+  expect:
+    must:
+    - kids_friendly
+    - direct_only
+- text: а в декабре?
+  today: '2026-10-26'
+  base:
+    month: 11
+  expect:
+    month: 12

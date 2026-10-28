@@ -6,6 +6,7 @@
 
 import asyncio
 import re
+import time
 import uuid
 from dataclasses import replace
 from datetime import date, timedelta
@@ -25,7 +26,14 @@ from trip_pilot.agent.events import (
     StageEvent,
     StepEvent,
 )
-from trip_pilot.agent.orchestrator import AgentDeps, MvpOrchestrator, NoLLM, places_of
+from trip_pilot.agent.orchestrator import (
+    DEFAULT_LLM_TIMEOUT,
+    AgentDeps,
+    MvpOrchestrator,
+    NoLLM,
+    is_button_answer,
+    places_of,
+)
 from trip_pilot.agent.toolkit import Toolkit
 from trip_pilot.domain.errors import BudgetTooLow, NoResults, UnknownCity
 from trip_pilot.domain.offers import Package
@@ -140,7 +148,8 @@ TOOLKIT = Toolkit(
 
 class Dialog:
     def __init__(
-        self, hotels=None, *, transport=None, toolkit=TOOLKIT, llm=None, knowledge=None
+        self, hotels=None, *, transport=None, toolkit=TOOLKIT, llm=None, knowledge=None,
+        llm_timeout=DEFAULT_LLM_TIMEOUT,
     ):
         self.src = fake_sources()
         deps = AgentDeps(
@@ -149,7 +158,7 @@ class Dialog:
             trips=self.src.trips, toolkit=toolkit, llm=llm or NoLLM(),
             knowledge=knowledge or self.src.knowledge,
         )
-        self.agent = MvpOrchestrator(deps, today=lambda: TODAY)
+        self.agent = MvpOrchestrator(deps, today=lambda: TODAY, llm_timeout=llm_timeout)
         self.session = uuid.uuid4()
 
     def say(self, text):
@@ -476,6 +485,82 @@ def test_next_question_gets_today():
 
     Dialog(toolkit=replace(TOOLKIT, next_question=spy)).say(REQUEST)
     assert seen == [TODAY]
+
+
+# --- Устойчивость к модели: она улучшает ход, но не может его оборвать ----------------------
+
+def test_any_crash_of_understanding_falls_back_to_rules():
+    async def crashes(text, state, *, catalog, today, llm):
+        raise TypeError("ответ провайдера без choices")  # не LLMUnavailable, а всё равно правила
+
+    d = Dialog(toolkit=replace(TOOLKIT, understand=crashes), llm=FakeLLM([]))
+    events = d.say(REQUEST)
+
+    assert isinstance(events[-1], DoneEvent)
+    assert d.state.request.destination == "antalya"
+    assert len(d.state.packages) == 3
+
+
+def test_slow_model_is_not_awaited_forever():
+    async def slow_understand(text, state, *, catalog, today, llm):
+        await asyncio.sleep(5)
+        return Success(TripRequest(origin="moscow", destination="sochi", month=11))
+
+    async def slow_narrate(packages, request, *, knowledge, llm):
+        if llm.enabled:
+            await asyncio.sleep(5)
+        return packages
+
+    toolkit = replace(TOOLKIT, understand=slow_understand, narrate=slow_narrate)
+    d = Dialog(toolkit=toolkit, llm=FakeLLM([]), llm_timeout=0.05)
+    start = time.perf_counter()
+    d.say(REQUEST)
+
+    assert time.perf_counter() - start < 2  # не ждали модель по 5 с на каждом шаге
+    assert d.state.request.destination == "antalya"  # разобрали правила
+    assert len(d.state.packages) == 3
+
+
+def test_narrate_crash_keeps_comparisons_made_without_model():
+    calls = []
+
+    async def narrate(packages, request, *, knowledge, llm):
+        calls.append(llm.enabled)
+        if llm.enabled:
+            raise RuntimeError("модель вернула мусор")
+        return [p.model_copy(update={"tradeoffs": ["сравнение без модели"]}) for p in packages]
+
+    d = Dialog(toolkit=replace(TOOLKIT, narrate=narrate), llm=FakeLLM([]))
+    d.say(REQUEST)
+
+    assert calls == [True, False]  # после сбоя — тот же narrate, но без модели
+    assert d.state.packages[0].tradeoffs == ["сравнение без модели"]
+
+
+def test_button_answer_goes_to_rules_without_model():
+    calls = []
+
+    async def understand(text, state, *, catalog, today, llm):
+        calls.append(text)
+        return None  # первое сообщение пусть тоже разберут правила
+
+    d = Dialog(toolkit=replace(TOOLKIT, understand=understand), llm=FakeLLM([]))
+    d.say("Из Москвы в Анталью в ноябре с ребёнком")
+    assert d.state.pending_question.slot == "children_ages"
+
+    events = d.say("2–6")  # ровно текст кнопки
+
+    assert calls == ["Из Москвы в Анталью в ноябре с ребёнком"]  # кнопку модели не отдавали
+    assert "Разбираю запрос" not in steps(events)
+    assert d.state.request.party.children_ages == [4]
+
+
+def test_button_answer_matches_options_ignoring_case_and_spaces():
+    question = PendingQuestion(slot="when", text="Когда?", options=["Ноябрь", "Январь"])
+    state = TripState(session_id=uuid.uuid4(), pending_question=question)
+    assert is_button_answer(state, " январь ")
+    assert not is_button_answer(state, "в январе, но лучше в феврале")
+    assert not is_button_answer(TripState(session_id=uuid.uuid4()), "Январь")
 
 
 # --- Пересборка плана ------------------------------------------------------------------------

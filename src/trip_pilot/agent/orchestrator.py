@@ -56,6 +56,9 @@ from trip_pilot.ports import (
 
 log = logging.getLogger(__name__)
 
+# Сколько секунд ждать модель на одном шаге (понимание, объяснения). Дольше — правила.
+DEFAULT_LLM_TIMEOUT = 15.0
+
 
 class NoLLM:
     """LLM не подключена: ведёт себя как адаптер без ключа — каждый вызов бросает LLMUnavailable."""
@@ -127,11 +130,29 @@ class AgentDeps:
     knowledge: KnowledgeBase | None = None
 
 
+def is_button_answer(state: TripState, text: str) -> bool:
+    """Ответ ровно текстом кнопки заданного вопроса: его точно и мгновенно разбирают правила."""
+    question = state.pending_question
+    if question is None:
+        return False
+    return text.strip().casefold() in {option.casefold() for option in question.options}
+
+
 class MvpOrchestrator:
-    def __init__(self, deps: AgentDeps, today: Callable[[], date] = date.today) -> None:
+    """Модель здесь — улучшение поверх правил, а не их замена: ни её сбой, ни медленный ответ,
+    ни ошибка в функции, которая её зовёт, не обрывают ход. Всё это — откат на правила
+    и шаблоны с записью в лог."""
+
+    def __init__(
+        self,
+        deps: AgentDeps,
+        today: Callable[[], date] = date.today,
+        llm_timeout: float = DEFAULT_LLM_TIMEOUT,
+    ) -> None:
         self._deps = deps
         self._tk = deps.toolkit
         self._today = today
+        self._llm_timeout = llm_timeout
 
     async def handle(self, session_id: uuid.UUID, text: str) -> AsyncIterator[AgentEvent]:
         state = await self._load(session_id)
@@ -148,7 +169,7 @@ class MvpOrchestrator:
         # 1. Обновить запрос. С LLM — понимание моделью; без неё или при сбое — правила:
         #    ответ на вопрос → изменение плана → новое сообщение.
         #    Шаг «с помощью ИИ» — только если модель действительно ответила.
-        if self._uses_llm(self._tk.understand):
+        if self._asks_model(state, text):
             yield StepEvent(text="Разбираю запрос")
         updated, by_ai = await self._understand(state, text, catalog, today)
         if by_ai:
@@ -306,21 +327,33 @@ class MvpOrchestrator:
     async def _load(self, session_id: uuid.UUID) -> TripState:
         return await self._deps.trips.load(session_id) or TripState(session_id=session_id)
 
-    def _uses_llm(self, function: object | None) -> bool:
-        return function is not None and self._deps.llm.enabled
+    def _asks_model(self, state: TripState, text: str) -> bool:
+        """Понимать ли сообщение моделью: есть функция и ключ, и это не нажатая кнопка."""
+        return (
+            self._tk.understand is not None
+            and self._deps.llm.enabled
+            and not is_button_answer(state, text)
+        )
 
     async def _understand(
         self, state: TripState, text: str, catalog: list[Destination], today: date
     ) -> tuple[Result[TripRequest, DomainError] | None, bool]:
         """Понимание моделью и «ответила ли модель». None — разбирать правилами."""
         understand = self._tk.understand
-        if understand is None or not self._deps.llm.enabled:
+        if understand is None or not self._asks_model(state, text):
             return None, False
         llm = AnsweredLLM(self._deps.llm)
+        call = understand(text, state, catalog=catalog, today=today, llm=llm)
         try:
-            result = await understand(text, state, catalog=catalog, today=today, llm=llm)
+            result = await asyncio.wait_for(call, self._llm_timeout)
         except LLMUnavailable as error:
             log.warning("LLM недоступна, разбираю запрос правилами: %s", error)
+            return None, False
+        except TimeoutError:
+            log.warning("Модель не ответила за %s с, разбираю запрос правилами", self._llm_timeout)
+            return None, False
+        except Exception:
+            log.exception("Понимание моделью упало, разбираю запрос правилами")
             return None, False
         return result, result is not None and llm.answered
 
@@ -333,10 +366,20 @@ class MvpOrchestrator:
             return packages, False
         knowledge = await self._knowledge(request)
         llm = AnsweredLLM(self._deps.llm)
+        call = narrate(packages, request, knowledge=knowledge, llm=llm)
         try:
-            return await narrate(packages, request, knowledge=knowledge, llm=llm), llm.answered
+            return await asyncio.wait_for(call, self._llm_timeout), llm.answered
         except LLMUnavailable as error:
-            log.warning("LLM недоступна, оставляю шаблонные объяснения: %s", error)
+            log.warning("LLM недоступна, объяснения без модели: %s", error)
+        except TimeoutError:
+            log.warning("Модель не ответила за %s с, объяснения без модели", self._llm_timeout)
+        except Exception:
+            log.exception("Объяснения моделью упали, объяснения без модели")
+        # Тот же narrate без модели: сравнения соседей шаблоном не теряются из-за её сбоя.
+        try:
+            return await narrate(packages, request, knowledge=knowledge, llm=NoLLM()), False
+        except Exception:
+            log.exception("Объяснения без модели тоже упали, остаются шаблоны explain")
             return packages, False
 
     async def _knowledge(self, request: TripRequest) -> list[KnowledgeHit]:

@@ -4,8 +4,8 @@ LLM не собирает `TripRequest` сама: она заполняет `Req
 а `apply_draft` проверяет черновик теми же правилами, что и разборщик, и собирает запрос.
 Так модель не подсунет несуществующий город, прошедшую дату или отрицательный бюджет.
 
-`understand` — один вызов модели на сообщение; сбой модели или ответ не по схеме → `None`,
-и оркестратор разбирает сообщение правилами, как в MVP.
+`understand` — один вызов модели на сообщение. Сбой модели, ответ не по схеме, черновик
+с ошибкой или без изменений → `None`, и оркестратор разбирает сообщение правилами, как в MVP.
 """
 
 from datetime import date, timedelta
@@ -88,8 +88,8 @@ def _dates(
         patch["date_from"] = start
         patch["month"] = None
     elif draft.month is not None:
-        if draft.month < today.month:
-            return Failure(DatesInPast(date(today.year, draft.month, 1)))
+        # Месяц без года — ближайший будущий: «Январь» в октябре — январь следующего года.
+        # Конкретную субботу со сдвигом года считает оркестратор (agent/dates.py), как и для правил.
         patch["month"] = draft.month
         patch["date_from"] = None
     if draft.date_to is not None:
@@ -251,5 +251,12 @@ async def understand(
         draft = await llm.structured(messages, RequestDraft)
     except (LLMUnavailable, ValidationError):
         return None
-    return apply_draft(draft, state, catalog=catalog, today=today)
+    result = apply_draft(draft, state, catalog=catalog, today=today)
+    # Модель — улучшение поверх правил, а не их замена. Черновик не прошёл проверку
+    # (модель ошиблась с месяцем, назвала сдвиг без прошлого поиска) или ничего не изменил
+    # («подешевле» без budget_change) — сообщение разбирают правила; если ошибка настоящая,
+    # правила покажут её сами.
+    if isinstance(result, Failure) or result.unwrap() == (state.request or TripRequest()):
+        return None
+    return result
 

@@ -97,11 +97,11 @@ def test_past_date_with_explicit_year_is_dates_in_past():
         assert isinstance(result.failure(), DatesInPast)
 
 
-def test_month_only_and_past_month():
+def test_month_without_year_is_nearest_future():
+    # Сегодня октябрь: «Январь» и «май» — ближайшие будущие, сдвиг года считает оркестратор.
     assert applied({"month": 12}).unwrap().month == 12
-    result = applied({"month": 5})
-    assert isinstance(result, Failure)
-    assert isinstance(result.failure(), DatesInPast)
+    assert applied({"month": 1}).unwrap().month == 1
+    assert applied({"month": 5}).unwrap().month == 5
 
 
 def test_exact_date_clears_month_from_previous_request():
@@ -273,16 +273,29 @@ def test_model_answer_becomes_request():
     assert request.party.adults == 2
 
 
-def test_model_answer_with_past_date_is_domain_failure():
-    result = understood('{"destination": "Анталья", "date_from": "5 января 2026"}')
-    assert isinstance(result, Failure), result
-    assert isinstance(result.failure(), DatesInPast)
+def test_model_answer_that_fails_the_check_goes_to_rules():
+    # Модель — улучшение поверх правил: черновик с ошибкой не доходит до человека,
+    # сообщение разбирают правила (и покажут ошибку сами, если она настоящая).
+    assert understood('{"destination": "Анталья", "date_from": "5 января 2026"}') is None
+    assert understood('{"destination": "Париж"}') is None
+    # «через две недели», понятое моделью как сдвиг без прошлого поиска.
+    assert understood('{"destination": "Анталья", "shift_days": 14}') is None
+    # «подешевле», когда бюджет ещё не назван.
+    assert understood('{"budget_change": "less"}') is None
 
 
-def test_model_answer_with_unknown_city_is_domain_failure():
-    result = understood('{"destination": "Париж"}')
-    assert isinstance(result, Failure), result
-    assert isinstance(result.failure(), UnknownCity)
+def test_model_answer_that_changes_nothing_goes_to_rules():
+    request = TripRequest(origin="moscow", destination="antalya", month=11)
+    assert understood("{}") is None  # первое сообщение, модель ничего не извлекла
+    # «можно подешевле?», а модель не заполнила budget_change: запрос тот же — пусть решат правила.
+    assert understood("{}", state=state_with(request), text="можно подешевле?") is None
+
+
+def test_january_button_in_october_is_next_january():
+    request = TripRequest(origin="moscow", destination="antalya")
+    result = understood('{"month": 1}', state=state_with(request), text="Январь")
+    assert isinstance(result, Success), result
+    assert result.unwrap().month == 1
 
 
 def test_broken_answer_or_no_key_means_rules():

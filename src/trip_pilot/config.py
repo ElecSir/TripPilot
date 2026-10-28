@@ -7,7 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Вся конфигурация берётся из переменных окружения (см. .env.example)."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Пустая переменная = значение по умолчанию: в .env.example все значения пустые
+    # (так просят организаторы), и `cp .env.example .env` не должен ломать запуск.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
 
     # В Docker собирается в docker-compose.yml из POSTGRES_*; значение ниже — для запуска
     # вне Docker с локальным override (порт БД 5433).

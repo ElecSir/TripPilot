@@ -144,3 +144,26 @@ def test_issues_come_from_itinerary_check():
     # поэтому ночного прилёта и несовпадения дат быть не должно
     economy = _by_tier(_packages())["economy"]
     assert not any("не совпадает" in issue for issue in economy.issues)
+
+
+def test_with_children_only_kids_friendly_hotels_are_offered():
+    outbound, inbound, hotels, transfers = _data()
+    # Кипарис (5★) без отметки «для детей»: без фильтра он бы выиграл у «Баланса» и «Комфорта».
+    hotels = [h.model_copy(update={"kids_friendly": h.id != 3}) for h in hotels]
+    result = simple_packages(
+        _request(party=Party(adults=2, children_ages=[5])), outbound, inbound, hotels, transfers
+    )
+    assert isinstance(result, Success), result
+    packages = result.unwrap()
+    assert packages
+    assert all(package.hotel.kids_friendly for package in packages)
+    assert _by_tier(packages)["balance"].hotel.kids_friendly
+
+
+def test_reasons_of_choice_are_added_to_why():
+    packages = _packages()
+    for package in packages:
+        assert any(line.startswith("Выбрали: ") for line in package.why)
+    economy = _by_tier(packages)["economy"]
+    text = " ".join(economy.why)
+    assert "до пляжа" in text or "рейтинг" in text

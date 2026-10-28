@@ -78,6 +78,12 @@ def _date_mismatch(package: Package) -> list[str]:
     return issues
 
 
+def _duration_text(delta: timedelta) -> str:
+    """«5 ч 30 мин», а не «5.5 ч»: дробные часы с точкой читаются как опечатка."""
+    hours, minutes = divmod(round(delta.total_seconds() / 60), 60)
+    return f"{hours} ч {minutes} мин" if minutes else f"{hours} ч"
+
+
 def _departure_trip(package: Package) -> list[str]:
     """Когда придётся выезжать в аэропорт: не ночью и без долгого ожидания после выезда."""
     depart = package.inbound.depart_at
@@ -91,9 +97,9 @@ def _departure_trip(package: Package) -> list[str]:
     )
     wait = leave - check_out_at
     if leave.date() == package.check_out and wait > LONG_WAIT:
-        hours = round(wait.total_seconds() / 3600, 1)
         issues.append(
             f"Между выездом из номера ({check_out_at:%H:%M}) и дорогой в аэропорт "
-            f"({leave:%H:%M}) около {hours:g} ч: нужен поздний выезд или камера хранения."
+            f"({leave:%H:%M}) около {_duration_text(wait)}: "
+            "нужен поздний выезд или камера хранения."
         )
     return issues

@@ -205,8 +205,10 @@ async def embed_index(session: AsyncSession, llm: LLM) -> None:
 
     processed = 0
 
-    for start in range(0, len(chunks), 64):
-        batch = chunks[start : start + 64]
+    batch_size = 16
+
+    for start in range(0, len(chunks), batch_size):
+        batch = chunks[start : start + batch_size]
 
         try:
             vectors = await llm.embed([chunk.content for chunk in batch])

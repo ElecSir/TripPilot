@@ -18,6 +18,8 @@ class KnowledgeChunk:
 
 def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     """Разобрать YAML в начале Markdown-файла."""
+    content = content.removeprefix("\ufeff")
+
     match = re.match(r"\A---\s*\r?\n(.*?)\r?\n---\s*(?:\r?\n|\Z)", content, re.DOTALL)
 
     if not match:

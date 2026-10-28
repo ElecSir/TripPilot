@@ -13,7 +13,6 @@ from pydantic import BaseModel
 from trip_pilot.adapters.db.knowledge import EMBEDDING_DIM
 from trip_pilot.adapters.llm.openai_compat import make_llm
 from trip_pilot.config import get_settings
-from trip_pilot.ports import LLMUnavailable
 
 log = logging.getLogger(__name__)
 

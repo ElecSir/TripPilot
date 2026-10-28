@@ -374,6 +374,55 @@ def test_embed_index_handles_llm_unavailable(monkeypatch):
     session.flush.assert_not_awaited()
 
 
+
+def test_embed_index_keeps_successful_batch_when_next_batch_fails(monkeypatch):
+    """Успешная пачка сохраняется, если следующая завершается ошибкой."""
+    monkeypatch.setenv("EMBEDDINGS_MODEL", "test-embedding-model")
+
+    chunks = [
+        KbChunk(
+            document_id="test-document",
+            content=f"Фрагмент {i}",
+            embedding=None,
+            embedding_model=None,
+        )
+        for i in range(17)
+    ]
+
+    class SequenceEmbeddingLLM:
+        enabled = True
+
+        def __init__(self):
+            self.calls = 0
+
+        async def embed(self, texts):
+            self.calls += 1
+
+            if self.calls == 1:
+                return [[0.1] * 1024 for _ in texts]
+
+            raise LLMUnavailable("HTTP 429 Too Many Requests")
+
+    session = make_embedding_session(chunks)
+    llm = SequenceEmbeddingLLM()
+
+    asyncio.run(embed_index(session, llm))
+
+    # Первые 16 фрагментов успешно получили эмбеддинги.
+    assert all(chunk.embedding == [0.1] * 1024 for chunk in chunks[:16])
+    assert all(
+        chunk.embedding_model == "test-embedding-model"
+        for chunk in chunks[:16]
+    )
+
+    # Последний фрагмент остался необработанным.
+    assert chunks[16].embedding is None
+    assert chunks[16].embedding_model is None
+
+    assert llm.calls == 2
+    session.flush.assert_awaited_once()
+
+
 def test_embed_index_skips_wrong_dimensions(monkeypatch, caplog):
     """Вектор неверной размерности не сохраняется."""
     monkeypatch.setenv("EMBEDDINGS_MODEL", "test-embedding-model")

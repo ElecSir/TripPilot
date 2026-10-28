@@ -1,0 +1,139 @@
+- query: "почему стоит поехать в Москву"
+  destination: moscow
+  expected_section: "Почему ехать"
+
+- query: "что посмотреть в Санкт-Петербурге"
+  destination: spb
+  expected_section: "Почему ехать"
+
+- query: "отдых с детьми в Казани"
+  destination: kazan
+  expected_section: "С детьми"
+
+- query: "можно ли приехать в Сочи с собакой"
+  destination: sochi
+  expected_section: "С животными"
+
+- query: "когда лучше ехать в Дубай"
+  destination: dubai
+  expected_section: "Когда лучше"
+
+- query: "какие минусы и риски отдыха в Анталье"
+  destination: antalya
+  expected_section: "Минусы и риски"
+
+- query: "подходит ли Анапа для отдыха с ребёнком"
+  destination: anapa
+  expected_section: "С детьми"
+
+- query: "можно ли путешествовать с кошкой в Калининград"
+  destination: kaliningrad
+  expected_section: "С животными"
+
+- query: "какая погода в Мурманске зимой"
+  destination: murmansk
+  expected_section: "Когда лучше"
+
+- query: "чем интересен Шарм-эль-Шейх"
+  destination: sharm
+  expected_section: "Почему ехать"
+
+- query: "Пхукет: риски и недостатки поездки"
+  destination: phuket
+  expected_section: "Минусы и риски"
+
+- query: "когда сезон для поездки в Нячанг"
+  destination: nha-trang
+  expected_section: "Когда лучше"
+
+- query: "семейный отдых в Москве с детьми"
+  destination: moscow
+  expected_section: "С детьми"
+
+- query: "путешествие с питомцем в Санкт-Петербург"
+  destination: spb
+  expected_section: "С животными"
+
+- query: "лучшее время для поездки в Казань"
+  destination: kazan
+  expected_section: "Когда лучше"
+
+- query: "минусы отдыха в Сочи"
+  destination: sochi
+  expected_section: "Минусы и риски"
+
+- query: "что хорошего в отдыхе в Анталье"
+  destination: antalya
+  expected_section: "Почему ехать"
+
+- query: "погода и сезон в Анапе"
+  destination: anapa
+  expected_section: "Когда лучше"
+
+- query: "отдых в Калининграде с детьми"
+  destination: kaliningrad
+  expected_section: "С детьми"
+
+- query: "почему стоит посетить Мурманск"
+  destination: murmansk
+  expected_section: "Почему ехать"
+
+- query: "отдых с ребёнком в Дубае"
+  destination: dubai
+  expected_section: "С детьми"
+
+- query: "отдых с собакой в Шарм-эль-Шейхе"
+  destination: sharm
+  expected_section: "С животными"
+
+- query: "когда лучше отдыхать на Пхукете"
+  destination: phuket
+  expected_section: "Когда лучше"
+
+- query: "недостатки поездки в Нячанг"
+  destination: nha-trang
+  expected_section: "Минусы и риски"
+
+- query: "можно ли ехать с собакой в Сочи"
+  destination: sochi
+  expected_section: "С животными"
+
+- query: "когда лучше ехать в Дубай с семьёй"
+  destination: dubai
+  expected_section: "Когда лучше"
+
+- query: "ребёнок и семейный отдых в Анталье"
+  destination: antalya
+  expected_section: "С детьми"
+
+- query: "сезон и климат в Мурманске"
+  destination: murmansk
+  expected_section: "Когда лучше"
+
+- query: "чем привлекателен Калининград"
+  destination: kaliningrad
+  expected_section: "Почему ехать"
+
+- query: "что учесть перед поездкой в Анапу"
+  destination: anapa
+  expected_section: "Минусы и риски"
+
+- query: "багаж в самолёте: что нужно учитывать"
+  destination: null
+  expected_section: "Багаж"
+
+- query: "можно ли взять собаку в поезд или самолёт"
+  destination: null
+  expected_section: "Животные"
+
+- query: "какие документы нужны для поездки с ребёнком"
+  destination: null
+  expected_section: "Дети"
+
+- query: "можно ли заселиться в отель раньше времени"
+  destination: null
+  expected_section: "Ранний заезд и поздний выезд"
+
+- query: "как заказать трансфер с детским креслом"
+  destination: null
+  expected_section: "Трансфер с детьми"

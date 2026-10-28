@@ -18,7 +18,6 @@ from trip_pilot.adapters.db.reference import Destination
 from trip_pilot.config import get_settings
 from trip_pilot.rag.retriever import search
 
-
 pytestmark = pytest.mark.skipif(
     not os.getenv("INTEGRATION"),
     reason="Запускается через docker compose --profile tests",

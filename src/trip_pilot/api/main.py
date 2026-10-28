@@ -15,7 +15,7 @@ from trip_pilot.adapters.sources.synthetic import (
     SyntheticTransportSource,
 )
 from trip_pilot.agent import clarifier, intent, understand
-from trip_pilot.agent.orchestrator import AgentDeps, MvpOrchestrator
+from trip_pilot.agent.orchestrator import DEFAULT_LLM_TIMEOUT, AgentDeps, MvpOrchestrator
 from trip_pilot.agent.toolkit import Toolkit
 from trip_pilot.api import chat, health, trips
 from trip_pilot.config import get_settings
@@ -46,10 +46,12 @@ def build_orchestrator(
     *,
     llm: LLM,
     today: Callable[[], date] = date.today,
+    llm_timeout: float = DEFAULT_LLM_TIMEOUT,
 ) -> MvpOrchestrator:
     """Агент: синтетика из БД (её создаёт bootstrap), база знаний и LLM.
 
     Без ключа `make_llm` отдаёт заглушку, и агент работает на правилах и шаблонах, как в MVP.
+    `llm_timeout` — сколько секунд ждать модель на одном шаге, дальше — правила.
     """
     deps = AgentDeps(
         catalog=SyntheticDestinationCatalog(sessions),
@@ -61,7 +63,7 @@ def build_orchestrator(
         llm=llm,
         knowledge=PostgresKnowledgeBase(sessions),
     )
-    return MvpOrchestrator(deps, today=today)
+    return MvpOrchestrator(deps, today=today, llm_timeout=llm_timeout)
 
 
 @asynccontextmanager
@@ -74,7 +76,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.sessions = sessions
     app.state.trips = SqlTripStateRepository(sessions)
     app.state.orders = SqlOrderRepository(sessions)
-    app.state.orchestrator = build_orchestrator(sessions, app.state.trips, llm=make_llm(settings))
+    app.state.orchestrator = build_orchestrator(
+        sessions, app.state.trips, llm=make_llm(settings), llm_timeout=settings.llm_step_timeout
+    )
     yield
     await engine.dispose()
 

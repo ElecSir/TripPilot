@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     embeddings_model: str | None = None
     llm_max_concurrency: int = 8
+    # Сколько секунд агент ждёт модель на одном шаге (понимание, объяснения); дольше — правила.
+    llm_step_timeout: float = 15.0
     demo_mode: str = "auto"
 
     @property

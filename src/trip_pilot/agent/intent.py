@@ -2,7 +2,7 @@
 
 import re
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from typing import Any
 
 from pydantic import ValidationError
@@ -105,6 +105,9 @@ _COUNTRY_FORMS = {
     "вьетнам": ("вьетнама", "вьетнаме"),
 }
 _COUNTRY_FUZZY = 80  # опечатки в названии страны («турцмю»)
+_UNMARKED_MATCH = 90  # город без «из»/«в» («Москва — Сочи») — только почти точное совпадение
+_DEPARTURES = ("moscow", "spb", "kazan")  # отсюда есть рейсы: одиночный такой город — вылет
+_MARKERS = {"из", "в", "во", "на"}
 _CLOSE_MISS = 65  # слово после «в» настолько похоже на город, что это опечатка, а не «в начале»
 _CITY_NOISE = {
     "море",
@@ -265,7 +268,54 @@ def _cities(
         if isinstance(result, Failure):
             return result
         patch["origin" if marker == "из" else "destination"] = result.unwrap()
+    # Без «из» и «в»: первый город вылета — откуда, следующее место — куда.
+    unmarked = [slug for slug in _unmarked_places(text, catalog) if slug not in patch.values()]
+    if "origin" not in patch and unmarked and unmarked[0] in _DEPARTURES:
+        patch["origin"] = unmarked.pop(0)
+    if "destination" not in patch and unmarked:
+        patch["destination"] = unmarked[0]
     return Success(patch)
+
+
+def _exact_place(value: str, catalog: list[Destination]) -> str | None:
+    """Город (почти точное совпадение) или страна с одним направлением в каталоге."""
+    for country in dict.fromkeys(normalize(city.country) for city in catalog):
+        if value in (country, *_COUNTRY_FORMS.get(country, ())):
+            slugs = [city.slug for city in catalog if normalize(city.country) == country]
+            return slugs[0] if len(slugs) == 1 else None
+    scores = _scores(value, catalog)
+    best = max(scores.values(), default=0)
+    if best < _UNMARKED_MATCH:
+        return None
+    candidates = [slug for slug, score in scores.items() if score == best]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _unmarked_places(text: str, catalog: list[Destination]) -> list[str]:
+    """Места без «из» и «в»: «Москва — Сочи», «Казань - Дубай», «Турция, ноябрь». По порядку."""
+    words = re.findall(r"[а-яa-z][а-яa-z-]*", text)
+    found: list[str] = []
+    index = 0
+    while index < len(words):
+        if index > 0 and words[index - 1] in _MARKERS:
+            index += 1
+            continue
+        for length in (3, 2, 1):
+            slug = _exact_place(" ".join(words[index : index + length]), catalog)
+            if slug is not None:
+                found.append(slug)
+                index += length
+                break
+        else:
+            # «москва-сочи» без пробелов: части через дефис проверяем по отдельности.
+            if "-" in words[index]:
+                found.extend(
+                    slug
+                    for part in words[index].split("-")
+                    if (slug := _exact_place(part, catalog)) is not None
+                )
+            index += 1
+    return list(dict.fromkeys(found))
 
 
 def _number(raw: str) -> int:
@@ -281,31 +331,50 @@ def _future_date(day: int, month: int, year: int | None, today: date) -> date:
     return candidate
 
 
+def _date_range(
+    start_day: int, start_month: int, end_day: int, end_month: int, year: int | None, today: date
+) -> dict[str, Any]:
+    """Диапазон дат → заезд и ночи; конец раньше начала или дольше 30 ночей — только заезд."""
+    start = _future_date(start_day, start_month, year, today)
+    end = date(start.year + (end_month < start_month), end_month, end_day)
+    nights = (end - start).days
+    if 1 <= nights <= 30:
+        return {"date_from": start, "month": None, "nights": nights}
+    return {"date_from": start, "month": None}
+
+
 def parse_when(text: str, today: date) -> dict[str, Any] | None:
     """Разбирает названные даты; проверку прошлого выполняет вызывающая функция."""
     text = normalize(text)
     if match := re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text):
         return {"date_from": date.fromisoformat(match[1]), "month": None}
-    if match := re.search(r"\b(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\b", text):
+    # «10.12–14.12», «с 10.12 по 14.12».
+    dotted = r"(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?"
+    if match := re.search(rf"\b{dotted}\s*(?:[-–—]|\s(?:по|до)\s)\s*{dotted}\b", text):
+        year = int(match[3]) if match[3] else None
+        return _date_range(
+            int(match[1]), int(match[2]), int(match[4]), int(match[5]), year, today
+        )
+    if match := re.search(rf"\b{dotted}\b", text):
         year = int(match[3]) if match[3] else None
         return {
             "date_from": _future_date(int(match[1]), int(match[2]), year, today),
             "month": None,
         }
-    # «с 5 по 12 декабря» и «с 5 до 12 декабря»; «до» не должно уходить в бюджет.
+    # «с 5 по 12 декабря», «с 5 до 12 декабря», «5–12 декабря», «28 декабря — 3 января».
+    # «до» без «с» не диапазон: «до 12 декабря» и «до 150 000» — не начало поездки.
     range_pattern = (
-        rf"\bс\s+(\d{{1,2}})\s*({_MONTH_PATTERN})?\s*(?:по|до)\s+(\d{{1,2}})\s*"
-        rf"({_MONTH_PATTERN})(?:\s+(\d{{4}}))?\b"
+        rf"(?:\bс\s+(\d{{1,2}})\s*({_MONTH_PATTERN})?\s*(?:по|до)\s+"
+        rf"|\b(\d{{1,2}})\s*({_MONTH_PATTERN})?\s*[-–—]\s*)"
+        rf"(\d{{1,2}})\s*({_MONTH_PATTERN})(?:\s+(\d{{4}}))?\b"
     )
     if match := re.search(range_pattern, text):
-        start_day, start_name, end_day, end_name, year_raw = match.groups()
+        with_s_day, with_s_name, dash_day, dash_name, end_day, end_name, year_raw = match.groups()
+        start_day, start_name = (with_s_day, with_s_name) if with_s_day else (dash_day, dash_name)
         end_month = month_number(end_name)
         start_month = month_number(start_name) if start_name else end_month
         year = int(year_raw) if year_raw else None
-        start = _future_date(int(start_day), start_month, year, today)
-        end_year = start.year + (end_month < start_month)
-        end = date(end_year, end_month, int(end_day))
-        return {"date_from": start, "month": None, "nights": (end - start).days}
+        return _date_range(int(start_day), start_month, int(end_day), end_month, year, today)
     if match := re.search(rf"\b(\d{{1,2}})\s+({_MONTH_PATTERN})(?:\s+(\d{{4}}))?\b", text):
         year = int(match[3]) if match[3] else None
         start = _future_date(int(match[1]), month_number(match[2]), year, today)
@@ -320,6 +389,8 @@ def parse_when(text: str, today: date) -> dict[str, Any] | None:
     for word, days in (("послезавтра", 2), ("завтра", 1)):
         if re.search(rf"\b{word}\b", text):
             return {"date_from": today + timedelta(days=days), "month": None}
+    if re.search(r"\bновый\s+год\b|\bновогодн\w*", text):  # «на новый год», «новогодние»
+        return {"date_from": _future_date(30, 12, None, today), "month": None}
     if "майские" in text:
         return {"month": 5, "date_from": None}
     for word in re.findall(r"[а-я]+", text):
@@ -493,6 +564,14 @@ def parse_request(
             (r"\bтепл\w*", "warm"),
             (r"\bгород\b", "city"),
             (r"\bгор[ыау]\b", "nature"),
+            # Горнолыжных направлений в каталоге нет: с этим тегом агент честно скажет «нет».
+            (r"\bгорнолыж\w*|\bлыж\w*|\bсноуборд\w*", "ski"),
+            # Про дорогу, а не про место: направления с долгим перелётом агент не предложит.
+            (
+                r"\bбез\s+долг\w*\s+(?:перел|дорог)\w*|\bнедолг\w*\s+(?:перел|лет)\w*"
+                r"|\bнедалеко\b|\bне\s+далеко\b|\bкоротк\w*\s+перел\w*",
+                "short_flight",
+            ),
         ):
             if re.search(pattern, low) and tag not in tags:
                 tags.append(tag)
@@ -532,8 +611,21 @@ def parse_request(
         return Failure(NoResults("Проверьте даты, длительность, бюджет и состав поездки"))
 
 
+_CHEAPER = (
+    r"\b(?:бюджет\w*\s+(?:меньше|поменьше|ниже)|(?:по)?дешевле|экономнее|слишком\s+дорого"
+    r"|дороговато|(?:уменьш|сократ|сниз)\w*\s+бюджет\w*)\b"
+)
+
+
+def _rubles(value: Decimal) -> str:
+    return f"{int(value):,}".replace(",", " ") + " ₽"
+
+
 def has_city_clause(text: str) -> bool:
     """Смешанное сообщение с городом нужно разбирать там, где доступен каталог."""
+    # «Казань — Дубай»: маршрут через тире или стрелку, без «из» и «в».
+    if re.search(r"\b[а-яa-z][а-яa-z-]+\s*(?:—|–|->|→|\s-\s)\s*[а-яa-z][а-яa-z-]+", text):
+        return True
     return any(
         match[1] == "из" or (match[2] not in _CITY_NOISE and month_number(match[2]) is None)
         for match in re.finditer(r"\b(из|в|во)\s+([а-яa-z-]+)", text)
@@ -560,16 +652,16 @@ def parse_change(text: str, current: TripRequest, *, today: date) -> dict[str, A
         patch.update(parse_when(low, today) or {})
         if budget := _budget(low):
             patch["budget"] = budget
-        elif (
-            re.search(r"\b(?:бюджет\s+меньше|подешевле|дешевле)\b", low)
-            and current.budget is not None
-        ):
-            patch["budget"] = (current.budget * Decimal("0.8")).quantize(Decimal("0.01"))
+        elif re.search(_CHEAPER, low) and current.budget is not None:
+            # Вниз до сотен: «до 123 000 ₽», а не «до 123 040,00».
+            patch["budget"] = (current.budget * Decimal("0.8") / 100).to_integral_value(
+                ROUND_FLOOR
+            ) * 100
             extra.append(
                 Assumption(
                     field="budget",
-                    value=str(patch["budget"]),
-                    reason="«Бюджет меньше» → уменьшение на 20%",
+                    value=f"до {_rubles(patch['budget'])}",
+                    reason=f"«Подешевле» → на 20% меньше, чем {_rubles(current.budget)}",
                 )
             )
         if duration := _duration(low):

@@ -183,9 +183,15 @@ def render_points(label: str, values: list, *, warning: bool = False) -> None:
     if not values:
         return
     st.markdown(f"**{label}**")
-    for value in values[:3]:
-        prefix = "⚠️" if warning else "•"
+    prefix = "⚠️" if warning else "•"
+    # Риски видны всегда целиком; у остальных списков сверх трёх пунктов — под «Ещё N».
+    shown, rest = (values, []) if warning else (values[:3], values[3:])
+    for value in shown:
         st.markdown(f"{prefix} {value}")
+    if rest:
+        with st.expander(f"Ещё {len(rest)}"):
+            for value in rest:
+                st.markdown(f"{prefix} {value}")
 
 
 def render_assumptions(plan: dict) -> None:
@@ -196,9 +202,7 @@ def render_assumptions(plan: dict) -> None:
     chips = []
     for assumption in assumptions:
         label = assumption_label(assumption, plan.get("places"))
-        chips.append(
-            f'<span class="trip-chip">{escape(label)} <span aria-hidden="true">✎</span></span>'
-        )
+        chips.append(f'<span class="trip-chip">{escape(label)}</span>')
     st.markdown(
         '<div class="trip-chip-list">' + "".join(chips) + "</div>",
         unsafe_allow_html=True,
@@ -210,7 +214,7 @@ def render_assumptions(plan: dict) -> None:
                     f"{assumption.get('field', 'Поле')}: "
                     f"{assumption.get('reason', 'Не указано')}"
                 )
-    st.caption("✎ Редактирование допущений появится после MVP")
+    st.caption("Поправить допущение можно сообщением: «на 5 ночей», «бюджет до 100 000»")
 
 
 def select_package(sid: str, package_id: str) -> None:

@@ -16,7 +16,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
@@ -37,11 +37,12 @@ from trip_pilot.agent.events import (
 )
 from trip_pilot.agent.replanner import describe_changes, reused_step, search_needs
 from trip_pilot.agent.toolkit import Toolkit
-from trip_pilot.domain.errors import DomainError, NoResults
+from trip_pilot.domain.errors import BudgetTooLow, DomainError, NoResults
 from trip_pilot.domain.knowledge import KnowledgeHit
 from trip_pilot.domain.offers import Destination, Package
 from trip_pilot.domain.request import TripRequest
-from trip_pilot.domain.trip_state import PendingQuestion, SearchCache, TripState
+from trip_pilot.domain.trip_state import PendingQuestion, SearchCache, SearchWindow, TripState
+from trip_pilot.planning.climate import climate_text
 from trip_pilot.ports import (
     LLM,
     ChatMessages,
@@ -58,6 +59,8 @@ log = logging.getLogger(__name__)
 
 # Сколько секунд ждать модель на одном шаге (понимание, объяснения). Дольше — правила.
 DEFAULT_LLM_TIMEOUT = 15.0
+# «Без долгих перелётов»: направления, куда лететь дольше, агент не предлагает.
+LONG_FLIGHT_MIN = 6 * 60
 
 
 class NoLLM:
@@ -138,6 +141,11 @@ def is_button_answer(state: TripState, text: str) -> bool:
     return text.strip().casefold() in {option.casefold() for option in question.options}
 
 
+def _without_assumptions(request: TripRequest) -> TripRequest:
+    """Сравнение «разбор что-то понял»: одни новые допущения — ещё не понимание."""
+    return request.model_copy(update={"assumptions": []})
+
+
 class MvpOrchestrator:
     """Модель здесь — улучшение поверх правил, а не их замена: ни её сбой, ни медленный ответ,
     ни ошибка в функции, которая её зовёт, не обрывают ход. Всё это — откат на правила
@@ -196,13 +204,16 @@ class MvpOrchestrator:
         if question is not None:
             stage = "inspire" if question.slot == "destination" else "clarify"
             yield StageEvent(stage=stage)
-            for event in await self._close(state, "", stage=stage, question=question):
+            overview = ""
+            if question.slot == "destination":
+                yield StepEvent(text="Сравниваю направления: погода, дорога и цена")
+                question, overview = await self._inspire(request, question, catalog, today)
+            for event in await self._close(state, overview, stage=stage, question=question):
                 yield event
             return
         window = resolve_window(request, today)
         if request.destination is None or request.origin is None or window is None:
-            error = NoResults("не нашлось направлений под эти условия")
-            for event in await self._close(state, texts.error_text(error, names)):
+            for event in await self._close(state, texts.no_destinations(request.tags, names)):
                 yield event
             return
 
@@ -400,13 +411,28 @@ class MvpOrchestrator:
             answered = self._tk.apply_answer(
                 state.pending_question, text, base, catalog=catalog, today=today
             )
+            if isinstance(answered, Success):
+                return answered
             if answered is not None:
+                # Не ответ на вопрос («Москва - Сочи 10–14 декабря» вместо города): если общий
+                # разбор что-то понял, берём его, иначе показываем ошибку ответа.
+                parsed = self._tk.parse_request(
+                    text, catalog=catalog, today=today, base=state.request
+                )
+                if isinstance(parsed, Success) and _without_assumptions(
+                    parsed.unwrap()
+                ) != _without_assumptions(base):
+                    return parsed
                 return answered
         if state.request is not None and state.search is not None:
             # Изменение считается от дат последнего поиска, а записывается в запрос пользователя.
             current = state.request.model_copy(
                 update={"date_from": state.search.check_in, "nights": state.search.nights}
             )
+            if current.budget is None and state.packages:
+                # «Подешевле» без названного бюджета считается от самого дорогого варианта плана.
+                top = max(package.total for package in state.packages)
+                current = current.model_copy(update={"budget": top})
             patch = self._tk.parse_change(text, current, today=today)
             if patch:
                 return Success(TripRequest.model_validate(state.request.model_dump() | patch))
@@ -427,6 +453,89 @@ class MvpOrchestrator:
         if resolve_window(request, today) is None:
             return texts.when_question(today)
         return None
+
+    async def _inspire(
+        self,
+        request: TripRequest,
+        question: PendingQuestion,
+        catalog: list[Destination],
+        today: date,
+    ) -> tuple[PendingQuestion, str]:
+        """Перед вопросом «куда» — по каждому направлению погода, дорога и цена из поиска.
+
+        Направление, где под условия нет ни одного пакета, не предлагаем и говорим почему;
+        «без долгих перелётов» убирает те, куда лететь дольше LONG_FLIGHT_MIN, «недорого» ставит
+        дешёвые первыми. Не из чего строить описание — вопрос остаётся как был.
+        """
+        window = resolve_window(request, today)
+        by_name = {d.name: d for d in catalog}
+        destinations = [by_name[name] for name in question.options if name in by_name]
+        if window is None or request.origin is None or not destinations:
+            return question, ""
+        previews = await asyncio.gather(
+            *(self._preview(request, d, window) for d in destinations)
+        )
+        offered = [p for p in previews if p.price_from is not None]
+        skipped = [p for p in previews if p.price_from is None and p.problem]
+        if "short_flight" in request.tags:
+            long = [p for p in offered if (p.flight_min or 0) > LONG_FLIGHT_MIN]
+            if len(long) < len(offered):
+                offered = sorted(
+                    (p for p in offered if p not in long), key=lambda p: p.flight_min or 0
+                )
+                skipped += [
+                    replace(p, problem=f"лететь от {texts.hours(p.flight_min or 0)}, "
+                            "а вы просили без долгих перелётов")
+                    for p in long
+                ]
+        if any(a.field == "budget" and a.value == "недорого" for a in request.assumptions):
+            offered.sort(key=lambda p: p.price_from or 0)
+        if not offered:
+            return question, ""
+        overview = texts.destinations_overview(
+            offered, skipped, window=window, tags=request.tags
+        )
+        options = [p.destination.name for p in offered]
+        return question.model_copy(update={"options": options}), overview
+
+    async def _preview(
+        self, request: TripRequest, destination: Destination, window: SearchWindow
+    ) -> texts.DestinationPreview:
+        """Тот же поиск и та же сборка пакетов, что в плане, только без трансферов."""
+        origin, party = request.origin or "", request.party
+        (outbound, inbound, hotels), _ = await self._gather({
+            "out": self._deps.transport.search(origin, destination.slug, window.check_in, party),
+            "back": self._deps.transport.search(
+                destination.slug, origin, window.check_out, party
+            ),
+            "hotels": self._deps.hotels.search(
+                destination.slug, window.check_in, window.check_out, party
+            ),
+        })
+        search_request = request.model_copy(
+            update={
+                "destination": destination.slug,
+                "date_from": window.check_in,
+                "nights": window.nights,
+            }
+        )
+        built = self._tk.simple_packages(search_request, outbound, inbound, hotels, {})
+        price, problem = None, None
+        match built:
+            case Success(packages) if packages:
+                price = min(p.total for p in packages)
+            case Failure(BudgetTooLow(min_total=cheapest)):
+                problem = f"дороже бюджета, от {texts.money(cheapest)}"
+            case Failure(NoResults()):
+                problem = "на эти даты нет подходящих рейсов или отелей"
+        return texts.DestinationPreview(
+            destination=destination,
+            climate=climate_text(destination.slug, window.check_in.month),
+            flight_min=min((leg.duration_min for leg in outbound), default=None),
+            direct=any(leg.stops == 0 for leg in outbound),
+            price_from=price,
+            problem=problem,
+        )
 
     async def _gather(
         self, calls: dict[str, Awaitable[list[Any]]]

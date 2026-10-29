@@ -143,6 +143,73 @@ def test_range_with_do_is_not_budget():
     assert request.budget is None
 
 
+@pytest.mark.parametrize(
+    ("text", "start", "nights"),
+    [
+        ("10–14 декабря", date(2026, 12, 10), 4),
+        ("10-14 декабря", date(2026, 12, 10), 4),
+        ("10 - 14 декабря вдвоём", date(2026, 12, 10), 4),
+        ("28 декабря — 3 января", date(2026, 12, 28), 6),
+        ("10.12–14.12", date(2026, 12, 10), 4),
+        ("с 10.12 по 14.12", date(2026, 12, 10), 4),
+    ],
+)
+def test_date_range_with_dash_is_check_in_and_nights(text, start, nights):
+    """«10–14 декабря» — заезд 10-го и 4 ночи, а не одна дата 14 декабря."""
+    request = parse_request(text, catalog=CATALOG, today=TODAY).unwrap()
+    assert (request.date_from, request.nights) == (start, nights)
+
+
+def test_reversed_or_too_long_range_keeps_only_check_in():
+    for text, start in (("14–10 декабря", date(2026, 12, 14)), ("1 ноября — 15 декабря", None)):
+        request = parse_request(text, catalog=CATALOG, today=TODAY).unwrap()
+        assert request.nights is None
+        if start is not None:
+            assert request.date_from == start
+
+
+@pytest.mark.parametrize(
+    ("text", "origin", "destination"),
+    [
+        ("Москва — Сочи 10–14 декабря", "moscow", "sochi"),
+        ("Москва Анталья ноябрь", "moscow", "antalya"),
+        ("Казань - Анталья на неделю", "kazan", "antalya"),
+        ("москва-сочи в декабре", "moscow", "sochi"),
+        ("Питер → Сочи", "spb", "sochi"),
+        ("Сочи на выходные", None, "sochi"),
+        ("Москва, ноябрь, вдвоём", "moscow", None),
+        ("в Сочи, Казань", "kazan", "sochi"),
+        ("Турция, ноябрь", None, "antalya"),
+        ("Анталья или Сочи", None, "antalya"),  # два места назначения — не маршрут
+    ],
+)
+def test_route_without_iz_and_v(text, origin, destination):
+    request = parse_request(text, catalog=CATALOG, today=TODAY).unwrap()
+    assert (request.origin, request.destination) == (origin, destination)
+
+
+def test_dash_route_goes_to_full_parser_not_to_change():
+    current = TripRequest(origin="moscow", destination="sochi", date_from=date(2026, 11, 7))
+    assert parse_change("Казань — Анталья 10–14 декабря", current, today=TODAY) is None
+    assert parse_change("10–14 декабря", current, today=TODAY)["nights"] == 4
+
+
+def test_new_year_ski_and_short_flight():
+    request = parse_request(
+        "на новый год, горнолыжка, без долгих перелётов", catalog=CATALOG, today=TODAY
+    ).unwrap()
+    assert request.date_from == date(2026, 12, 30)
+    assert {"ski", "short_flight"} <= set(request.tags)
+    assert "short_flight" in parse_request(
+        "к морю, но недалеко", catalog=CATALOG, today=TODAY
+    ).unwrap().tags
+
+
+def test_age_range_is_not_a_date_range():
+    request = parse_request("ребёнку 2–6 лет, в декабре", catalog=CATALOG, today=TODAY).unwrap()
+    assert (request.month, request.date_from) == (12, None)
+
+
 @pytest.mark.parametrize("text", ["31 ноября", "на 0 ночей", "на 31 день", "бюджет 0"])
 def test_invalid_input_returns_failure_instead_of_exception(text):
     result = parse_request(text, catalog=CATALOG, today=TODAY)
@@ -224,6 +291,21 @@ def test_change_patch_uses_current_values(text, expected):
     assert current.model_dump() == before
     if text in ("бюджет меньше", "подешевле", "дешевле"):
         assert any(item.field == "budget" and item.reason for item in updated.assumptions)
+
+
+@pytest.mark.parametrize(
+    "text", ["давай подешевле", "слишком дорого", "дороговато", "уменьши бюджет", "бюджет пониже"]
+)
+def test_cheaper_rounds_down_to_hundreds_and_explains(text):
+    current = TripRequest(origin="moscow", destination="antalya", budget=Decimal("153800"))
+    patch = parse_change(text, current, today=TODAY)
+    if text == "бюджет пониже":  # «пониже» не в словаре — правила не придумывают
+        assert patch is None
+        return
+    assert patch["budget"] == Decimal("123000")
+    [assumption] = [item for item in patch["assumptions"] if item.field == "budget"]
+    assert assumption.value == "до 123 000 ₽"
+    assert "153 800 ₽" in assumption.reason
 
 
 def test_unrelated_or_inapplicable_change_returns_none():

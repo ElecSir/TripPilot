@@ -1,6 +1,6 @@
 """Простые пакеты: economy, balance, comfort без многокритериального поиска. Зона: data."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -189,15 +189,29 @@ def _choose(candidates: list[_Candidate], request: TripRequest) -> dict[Tier, _C
         ("balance", balance),
     ]
     for tier, pick in pickers:
-        if not pool:
-            break
         # Три пакета должны быть разными не только по рейсам: отель тоже не повторяем.
+        # Отели кончились — тот же отель ещё раз, только если он дешевле или прямее уже
+        # выбранного; иначе пакетов меньше трёх, а не «Баланс» дороже «Комфорта» в том же отеле.
         used = {candidate.hotel.id for candidate in chosen.values()}
-        fresh = [candidate for candidate in pool if candidate.hotel.id not in used] or pool
+        fresh = [candidate for candidate in pool if candidate.hotel.id not in used] or [
+            candidate for candidate in pool if not _dominated(candidate, chosen.values())
+        ]
+        if not fresh:
+            break
         candidate = pick(fresh)
         pool.remove(candidate)
         chosen[tier] = candidate
     return chosen
+
+
+def _dominated(candidate: _Candidate, chosen: Iterable[_Candidate]) -> bool:
+    """Тот же отель, не дешевле и не прямее уже выбранного варианта: выбирать его незачем."""
+    return any(
+        other.hotel.id == candidate.hotel.id
+        and candidate.total >= other.total
+        and (other.direct or not candidate.direct)
+        for other in chosen
+    )
 
 
 def _build(

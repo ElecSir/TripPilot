@@ -5,6 +5,7 @@ from trip_pilot.domain.request import TripRequest
 
 MAX_DESTINATIONS = 3
 MAX_PER_COUNTRY = 2  # три направления одной страны не предлагаем
+TRIP_TAGS = {"short_flight"}  # про дорогу, а не про место: у направлений таких тегов нет
 
 
 def _month(request: TripRequest) -> int | None:
@@ -43,7 +44,7 @@ def _diversify(suitable: list[Destination]) -> list[Destination]:
 def pick_destinations(request: TripRequest, catalog: list[Destination]) -> list[Destination]:
     """До трёх направлений: сезон и теги → разнообразие по странам; город вылета исключается."""
     month = _month(request)
-    tags = set(request.tags)
+    tags = set(request.tags) - TRIP_TAGS
     origin = request.origin
     suitable = sorted(
         (

@@ -3,6 +3,7 @@
 Объяснения по каждому пакету (why, tradeoffs, risks) пишет ui в services/explanation.py.
 """
 
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -52,6 +53,82 @@ def plural(n: int, one: str, few: str, many: str) -> str:
     return many
 
 
+MONTHS_PREPOSITIONAL = {
+    1: "январе", 2: "феврале", 3: "марте", 4: "апреле", 5: "мае", 6: "июне",
+    7: "июле", 8: "августе", 9: "сентябре", 10: "октябре", 11: "ноябре", 12: "декабре",
+}
+_TAG_WORDS = {"sea": "море", "city": "город", "nature": "природа"}
+
+
+@dataclass(frozen=True)
+class DestinationPreview:
+    """Что агент узнал о направлении, прежде чем его предложить: всё — из поиска и справочника."""
+
+    destination: Destination
+    climate: str | None  # «днём около +27 °C, море +25 °C»
+    flight_min: int | None  # самый быстрый рейс туда
+    direct: bool  # есть рейс без пересадок
+    price_from: Decimal | None  # самый дешёвый пакет без трансфера, на всех; None — не предлагаем
+    problem: str | None = None  # почему не предлагаем: «дороже бюджета…»
+
+
+def hours(minutes: int) -> str:
+    h, m = divmod(minutes, 60)
+    if not h:
+        return f"{m} мин"
+    return f"{h} ч {m} мин" if m else f"{h} ч"
+
+
+def destinations_overview(
+    offered: list[DestinationPreview],
+    skipped: list[DestinationPreview],
+    *,
+    window: SearchWindow,
+    tags: list[str],
+) -> str:
+    """Вдохновение: почему подходит, погода, дорога и цена по каждому направлению."""
+    month = window.check_in.month
+    lines = [
+        f"Подобрал направления на {period(window.check_in, window.check_out)}. "
+        "Цена — за перелёт и отель на всех, трансфер добавится в пакете:",
+        "",
+    ]
+    for preview in offered:
+        destination = preview.destination
+        why = [word for tag, word in _TAG_WORDS.items() if tag in tags and tag in destination.tags]
+        if month in destination.warm_months:
+            why.append(f"тепло в {MONTHS_PREPOSITIONAL[month]}")
+        details = [", ".join(why)] if why else []
+        if preview.climate:
+            details.append(preview.climate)
+        if preview.flight_min is not None:
+            way = "есть прямые рейсы" if preview.direct else "только с пересадкой"
+            details.append(f"лететь от {hours(preview.flight_min)}, {way}")
+        if preview.price_from is not None:
+            details.append(f"от {money(preview.price_from)}")
+        lines.append(f"- **{destination.name}**, {destination.country}: {'; '.join(details)}.")
+    for preview in skipped:
+        lines.append(f"\n{preview.destination.name} — не в списке: {preview.problem}.")
+    lines.append(
+        "\nПогода — средняя за месяц, ориентир, а не прогноз. "
+        "Куда поедем? Выберите кнопкой или напишите своё."
+    )
+    return "\n".join(lines)
+
+
+def no_destinations(tags: list[str], names: dict[str, str]) -> str:
+    """Под условия не подошло ни одно направление каталога: честно и с тем, что есть."""
+    reason = (
+        "горнолыжных курортов в нашем каталоге нет"
+        if "ski" in tags
+        else "под эти условия и сезон в нашем каталоге направлений нет"
+    )
+    return (
+        f"Не подберу: {reason} (данные демонстрационные). Есть: {', '.join(names.values())}. "
+        "Напишите, куда хотите, или поменяйте условия — например, месяц."
+    )
+
+
 def destination_question(options: list[Destination]) -> PendingQuestion:
     return PendingQuestion(
         slot="destination",
@@ -86,7 +163,11 @@ def when_question(today: date) -> PendingQuestion:
 def error_text(error: DomainError, names: dict[str, str]) -> str:
     match error:
         case UnknownCity(raw=raw):
-            return f"Не знаю город «{raw}». Напишите иначе, например «Сочи» или «Анталья»."
+            return (
+                f"Не знаю город «{raw}»: в нашем каталоге его нет (данные демонстрационные). "
+                f"Есть: {', '.join(names.values())}. Напишите одно из них или опишите, "
+                "чего хочется («к морю в декабре»), — подберу сам."
+            )
         case AmbiguousCity(raw=raw, candidates=candidates):
             variants = ", ".join(names.get(c, c) for c in candidates)
             return f"«{raw}» — это {variants}? Уточните, пожалуйста."

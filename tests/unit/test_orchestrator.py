@@ -16,6 +16,7 @@ import pytest
 from returns.result import Failure, Success
 
 from tests.fakes import FakeLLM, fake_sources
+from trip_pilot.agent import orchestrator as orchestrator_module
 from trip_pilot.agent.actions import SelectPackage
 from trip_pilot.agent.dates import first_saturday, resolve_window
 from trip_pilot.agent.events import (
@@ -34,6 +35,7 @@ from trip_pilot.agent.orchestrator import (
     is_button_answer,
     places_of,
 )
+from trip_pilot.agent.texts import money
 from trip_pilot.agent.toolkit import Toolkit
 from trip_pilot.domain.errors import BudgetTooLow, NoResults, UnknownCity
 from trip_pilot.domain.offers import Package
@@ -278,6 +280,116 @@ def test_unknown_city_keeps_pending_question():
 
     assert "Не знаю город «урюпинска»" in reply(events)
     assert of(events, QuestionEvent)[0].text == "Откуда полетите?"  # кнопки снова на месте
+    assert d.state.pending_question.slot == "origin"
+
+
+def test_destination_question_explains_weather_road_and_price():
+    d = Dialog()
+    d.say("Хочу на море в ноябре")
+    events = d.say("Москва")
+
+    assert "Сравниваю направления: погода, дорога и цена" in [e.text for e in of(events, StepEvent)]
+    text = reply(events)
+    # Цена — самый дешёвый пакет без трансфера: рейсы 6 000 ₽ × 2 × 2 + отель 4 500 ₽ × 7.
+    assert (
+        "- **Сочи**, Россия: днём около +15 °C, море +15 °C; лететь от 2 ч 30 мин, "
+        f"есть прямые рейсы; от {money(Decimal('55500'))}."
+    ) in text
+    assert "**Анталья**, Турция" in text
+    assert "ориентир, а не прогноз" in text
+    assert of(events, QuestionEvent)[0].options == ["Сочи", "Анталья"]
+
+
+def test_destination_over_budget_is_not_offered_and_reason_is_said():
+    d = Dialog()
+    d.say("Хочу на море в ноябре до 70000")
+    events = d.say("Москва")
+
+    assert of(events, QuestionEvent)[0].options == ["Сочи"]
+    assert f"Анталья — не в списке: дороже бюджета, от {money(Decimal('81200'))}." in reply(events)
+
+
+def test_short_flight_drops_long_destinations(monkeypatch):
+    monkeypatch.setattr(orchestrator_module, "LONG_FLIGHT_MIN", 200)  # Сочи 2,5 ч, Анталья 4 ч
+
+    def with_tags(text, *, catalog, today, base=None):
+        request = parse_request(text, catalog=catalog, today=today, base=base).unwrap()
+        return Success(request.model_copy(update={"tags": ["sea", "short_flight"]}))
+
+    d = Dialog(toolkit=replace(TOOLKIT, parse_request=with_tags))
+    d.say("Хочу на море в ноябре без долгих перелётов")
+    events = d.say("Москва")
+
+    assert of(events, QuestionEvent)[0].options == ["Сочи"]
+    assert "Анталья — не в списке: лететь от 4 ч, а вы просили без долгих перелётов." in reply(
+        events
+    )
+
+
+def test_nothing_in_catalog_is_said_honestly_with_what_we_have():
+    def ski(text, *, catalog, today, base=None):
+        request = parse_request(text, catalog=catalog, today=today, base=base).unwrap()
+        return Success(request.model_copy(update={"tags": ["ski"]}))
+
+    def nothing(request, catalog):
+        return []
+
+    d = Dialog(toolkit=replace(TOOLKIT, parse_request=ski, pick_destinations=nothing))
+    d.say("горнолыжка в декабре")
+    events = d.say("Москва")
+
+    text = reply(events)
+    assert "горнолыжных курортов в нашем каталоге нет" in text
+    assert "Есть: Москва, Сочи, Анталья" in text
+    assert not of(events, QuestionEvent)
+
+
+def test_unknown_city_lists_catalog():
+    d = Dialog()
+    events = d.say("из Урюпинска в Сочи")
+    assert "в нашем каталоге его нет" in reply(events)
+    assert "Есть: Москва, Сочи, Анталья" in reply(events)
+
+
+def test_cheaper_without_budget_counts_from_most_expensive_package():
+    seen = []
+
+    def recording_change(text, current, *, today):
+        seen.append(current.budget)
+        return parse_change(text, current, today=today)
+
+    d = Dialog(toolkit=replace(TOOLKIT, parse_change=recording_change))
+    d.say("Из Москвы в Анталью в ноябре")
+    top = max(p.total for p in d.state.packages)
+    d.say("подешевле")
+
+    assert seen == [top]
+    assert d.state.request.budget is None  # потолок плана в запрос пользователя не попадает
+
+
+def strict_answer(question, text, request, *, catalog, today):
+    """Как у data: ответ на «откуда», не похожий на город, — ошибка UnknownCity."""
+    answered = apply_answer(question, text, request, catalog=catalog, today=today)
+    if answered is None and question.slot == "origin":
+        return Failure(UnknownCity(text))
+    return answered
+
+
+def test_message_instead_of_answer_is_parsed_when_rules_understand_it():
+    d = Dialog(toolkit=replace(TOOLKIT, apply_answer=strict_answer))
+    d.say("Хочу на море в ноябре")
+    events = d.say("из Москвы в Анталью")
+
+    assert stages(events)[-2:] == ["search", "compare"]
+    assert d.state.request.origin == "moscow"
+
+
+def test_unclear_answer_keeps_answer_error():
+    d = Dialog(toolkit=replace(TOOLKIT, apply_answer=strict_answer))
+    d.say("Хочу на море в ноябре")
+    events = d.say("давай подешевле")
+
+    assert "Не знаю город «давай подешевле»" in reply(events)
     assert d.state.pending_question.slot == "origin"
 
 

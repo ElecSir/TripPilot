@@ -8,17 +8,18 @@ import argparse
 import asyncio
 import json
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
 import yaml
-from returns.result import Failure
+from returns.result import Failure, Success
 from sqlalchemy import select
 
 from trip_pilot.adapters.db.engine import create_engine, create_session_factory
 from trip_pilot.adapters.db.reference import Destination as DestinationRow
 from trip_pilot.adapters.llm.openai_compat import make_llm
-from trip_pilot.agent.intent import parse_request
+from trip_pilot.agent.intent import parse_change, parse_request
 from trip_pilot.agent.understand import understand
 from trip_pilot.config import get_settings
 from trip_pilot.domain.offers import Destination
@@ -52,7 +53,7 @@ def expected_value(request: TripRequest, field: str):
     if field == "pets":
         return request.party.pets
     if field == "budget":
-        return str(request.budget) if request.budget is not None else None
+        return request.budget
     return getattr(request, field)
 
 
@@ -74,6 +75,9 @@ def check_expected(request: TripRequest, expected: dict) -> list[str]:
     for field, expected_item in expected.items():
         actual = normalize_value(expected_value(request, field))
         wanted = normalize_value(expected_item)
+        if field == "budget" and actual is not None and wanted is not None:
+            # «150500» и «150500.0» — одна сумма: деньги сравниваются как Decimal.
+            actual, wanted = Decimal(str(actual)), Decimal(str(wanted))
 
         if actual != wanted:
             errors.append(f"{field}: ожидалось {wanted!r}, получено {actual!r}")
@@ -91,12 +95,17 @@ async def evaluate_parse(catalog: list[Destination]) -> tuple[int, int, list[str
         today = date.fromisoformat(str(case["today"]))
         base = TripRequest.model_validate(case["base"]) if case.get("base") else None
 
-        result = parse_request(
-            case["text"],
-            catalog=catalog,
-            today=today,
-            base=base,
-        )
+        # Как в оркестраторе: сначала изменение прошлого запроса, затем полный разбор.
+        patch = parse_change(case["text"], base, today=today) if base is not None else None
+        if patch:
+            result = Success(TripRequest.model_validate(base.model_dump() | patch))
+        else:
+            result = parse_request(
+                case["text"],
+                catalog=catalog,
+                today=today,
+                base=base,
+            )
 
         if isinstance(result, Failure):
             errors.append(f"[parse #{number}] {case['text']!r}: {result.failure()}")

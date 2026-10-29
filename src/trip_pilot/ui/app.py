@@ -3,7 +3,6 @@
 import json
 import logging
 import uuid
-from collections.abc import Iterator
 from html import escape
 from pathlib import Path
 
@@ -11,7 +10,6 @@ import httpx
 import streamlit as st
 
 from trip_pilot.agent.events import (
-    AgentEvent,
     DeltaEvent,
     DoneEvent,
     ErrorEvent,
@@ -19,9 +17,9 @@ from trip_pilot.agent.events import (
     QuestionEvent,
     StageEvent,
     StepEvent,
-    parse_event,
 )
 from trip_pilot.config import get_settings
+from trip_pilot.ui.agent_stream import AgentStream
 from trip_pilot.ui.cart_view import (
     cart_details_html,
     cart_header_html,
@@ -40,6 +38,7 @@ from trip_pilot.ui.plan_view import (
     has_synthetic_offers,
     hotel_details,
     plan_assumptions,
+    sources_text,
     transfer_text,
 )
 from trip_pilot.ui.theme import theme_css
@@ -63,6 +62,13 @@ st.set_page_config(page_title="TripPilot", page_icon="🧳", layout="wide")
 def apply_theme(dark: bool) -> None:
     """Применяет палитру без привязки карточек к внутренним wrapper Streamlit."""
     st.markdown(theme_css(dark), unsafe_allow_html=True)
+
+
+@st.fragment
+def render_theme_toggle() -> None:
+    """Смена темы не перезапускает чтение потока ответа агента."""
+    dark = st.toggle("Тёмная тема", key="ui_dark_mode")
+    apply_theme(dark)
 
 
 @st.cache_resource
@@ -110,54 +116,67 @@ def load_plan(sid: str) -> dict:
         return {}
 
 
-def stream_events(
-    sid: str, text: str | None = None, action: dict | None = None
-) -> Iterator[AgentEvent]:
+def run_agent(sid: str, text: str | None = None, action: dict | None = None) -> None:
+    """Создаёт один запрос; перерисовки экрана сохраняют тот же рабочий поток."""
+    if st.session_state.get("agent_run"):
+        return
     payload = {"session_id": sid}
     if action is not None:
         payload["action"] = action
     else:
         payload["text"] = text or ""
-    with api_client().stream("POST", "/api/chat", json=payload) as response:
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if line.startswith("data: "):
-                yield parse_event(line.removeprefix("data: "))
+    st.session_state.agent_error = None
+    st.session_state.agent_run = {
+        "stream": AgentStream(api_client(), payload),
+        "reply": "", "question": "", "stage": "Агент работает…", "steps": [], "error": None,
+    }
 
 
-def run_agent(sid: str, text: str | None = None, action: dict | None = None) -> str | None:
-    status = st.status("Агент работает…")
-    answer = st.empty()
-    reply = ""
-    question_text = ""
-    try:
-        for event in stream_events(sid, text=text, action=action):
-            match event:
-                case StageEvent(stage=stage):
-                    status.update(label=STAGE_LABELS.get(stage, stage))
-                case StepEvent(text=step):
-                    status.write(step)
-                case DeltaEvent(text=delta):
-                    reply += delta
-                    answer.markdown(reply)
-                case ErrorEvent(text=error):
-                    status.update(label="Ошибка", state="error")
-                    st.error(error)
-                    return None
-                case DoneEvent():
-                    break
-                case QuestionEvent(text=question, options=options):
-                    question_text = question
-                    st.session_state.pending_question = {"text": question, "options": options}
-                case PlanEvent(data=data):
-                    st.session_state.plan = data
-                    st.session_state.pending_question = data.get("pending_question")
-    except (httpx.HTTPError, ValueError):
-        status.update(label="API недоступен", state="error")
-        st.error("Не удалось связаться с API. Повторите попытку позже.")
-        return None
-    status.update(label="Готово", state="complete")
-    return reply.strip() or question_text
+@st.fragment(run_every=0.2)
+def render_agent_progress(status, details, answer) -> None:
+    """Короткое чтение очереди оставляет экран свободным для переключения темы."""
+    run = st.session_state.get("agent_run")
+    if not run:
+        return
+    stream = run["stream"]
+    previous_stage = run["stage"]
+    previous_reply = run["reply"]
+    # Сначала проверяем завершение: иначе можно пропустить последние события очереди.
+    finished = stream.finished
+    for event in stream.drain():
+        match event:
+            case StageEvent(stage=stage):
+                run["stage"] = STAGE_LABELS.get(stage, stage)
+            case StepEvent(text=step):
+                run["steps"].append(step)
+            case DeltaEvent(text=delta):
+                run["reply"] += delta
+            case ErrorEvent(text=error):
+                run["error"] = error
+            case QuestionEvent(text=question, options=options):
+                run["question"] = question
+                st.session_state.pending_question = {"text": question, "options": options}
+            case PlanEvent(data=data):
+                st.session_state.plan = data
+                st.session_state.pending_question = data.get("pending_question")
+            case DoneEvent():
+                pass
+    if finished:
+        reply = run["reply"].strip() or run["question"]
+        if reply:
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+        st.session_state.agent_error = run["error"] or stream.error
+        st.session_state.agent_run = None
+        st.rerun()
+    if run["stage"] != previous_stage:
+        status.update(label=run["stage"], state="running")
+    # Обновляем один слот: шаги остаются видны и при следующем пустом опросе фрагмента.
+    if run["steps"]:
+        details.markdown("\n".join(f"- {step}" for step in run["steps"]))
+    else:
+        details.caption("Подробности этапа ещё не получены.")
+    if run["reply"] != previous_reply:
+        answer.markdown(run["reply"])
 
 
 def render_points(label: str, values: list, *, warning: bool = False) -> None:
@@ -184,13 +203,19 @@ def render_assumptions(plan: dict) -> None:
         '<div class="trip-chip-list">' + "".join(chips) + "</div>",
         unsafe_allow_html=True,
     )
-    with st.expander("Почему агент сделал эти допущения?"):
-        for assumption in assumptions:
-            st.write(f"{assumption.get('field', 'Поле')}: {assumption.get('reason', 'Не указано')}")
+    with st.container(key="assumptions_explanation"):
+        with st.expander("Почему агент сделал эти допущения?"):
+            for assumption in assumptions:
+                st.write(
+                    f"{assumption.get('field', 'Поле')}: "
+                    f"{assumption.get('reason', 'Не указано')}"
+                )
     st.caption("✎ Редактирование допущений появится после MVP")
 
 
 def select_package(sid: str, package_id: str) -> None:
+    if st.session_state.get("agent_run"):
+        return
     # При выборе другого пакета старый платёж не должен использоваться повторно.
     st.session_state.checkout_attempt = None
     st.session_state.checkout_dialog_open = False
@@ -200,7 +225,6 @@ def select_package(sid: str, package_id: str) -> None:
         st.toast("Демонстрационный пакет выбран")
         return
     run_agent(sid, action={"type": "select_package", "package_id": package_id})
-    st.session_state.plan = load_plan(sid)
 
 
 def render_package(
@@ -227,10 +251,12 @@ def render_package(
     st.markdown("**🚐 Трансфер**")
     st.write(transfer_text(package.get("transfer")))
     render_points("Почему подходит", package.get("why") or [])
+    if sources := sources_text(package):
+        st.text(sources)
     render_points("Чем жертвуем", package.get("tradeoffs") or [])
     render_points(
         "Риски",
-        (package.get("issues") or []) + (package.get("risks") or []),
+        list(dict.fromkeys(package.get("risks") or [])),
         warning=True,
     )
     selected = selected_id == package_id
@@ -239,7 +265,7 @@ def render_package(
         key=f"select_{package_id}",
         type="primary" if selected else "secondary",
         use_container_width=True,
-        disabled=selected or not package_id,
+        disabled=selected or not package_id or bool(st.session_state.get("agent_run")),
         on_click=select_package,
         args=(sid, package_id),
     )
@@ -247,6 +273,8 @@ def render_package(
 
 def open_checkout(sid: str, package_id: str) -> None:
     """Ключ создаётся только для новой пары сессия–пакет и сохраняется при повторах."""
+    if st.session_state.get("agent_run"):
+        return
     st.session_state.checkout_attempt = prepare_attempt(
         st.session_state.get("checkout_attempt"), sid, package_id
     )
@@ -353,7 +381,7 @@ def checkout_dialog(
 def render_basket(package: dict, plan: dict, sid: str) -> None:
     """Одна выделенная панель для состава поездки, цены и действий."""
     tier = TIER_LABELS.get(package.get("tier"), "Выбранный пакет")
-    with st.container(border=True):
+    with st.container(border=True, key="trip_basket"):
         st.markdown(cart_header_html(tier), unsafe_allow_html=True)
         render_cart_contents(package, plan.get("request") or {}, plan.get("places") or {})
 
@@ -375,6 +403,7 @@ def render_basket(package: dict, plan: dict, sid: str) -> None:
                     use_container_width=True,
                     on_click=open_checkout,
                     args=(sid, package["id"]),
+                    disabled=bool(st.session_state.get("agent_run")),
                 )
         if not order:
             comparing = st.session_state.get("compare_packages", False)
@@ -384,6 +413,7 @@ def render_basket(package: dict, plan: dict, sid: str) -> None:
                     key="compare_again",
                     type="secondary",
                     use_container_width=True,
+                    disabled=bool(st.session_state.get("agent_run")),
                 ):
                     st.session_state.compare_packages = not comparing
                     st.rerun()
@@ -438,6 +468,8 @@ def render_plan(plan: dict, sid: str) -> None:
 
 def queue_answer() -> None:
     """Передаёт ровно текст выбранной кнопки; свободный ввод остаётся доступен."""
+    if st.session_state.get("agent_run"):
+        return
     choice = st.session_state.get("question_choice")
     if choice:
         st.session_state.queued_answer = choice
@@ -465,6 +497,7 @@ def render_question() -> None:
             key="question_choice",
             selection_mode="single",
             on_change=queue_answer,
+            disabled=bool(st.session_state.get("agent_run")),
         )
 
 
@@ -479,37 +512,45 @@ if st.session_state.get("active_sid") != sid:
     st.session_state.checkout_attempt = None
     st.session_state.checkout_dialog_open = False
     st.session_state.compare_packages = False
+    st.session_state.agent_run = None
+    st.session_state.agent_error = None
 
 header_title, header_theme = st.columns([5, 1], vertical_alignment="center")
 with header_title:
     st.title("TripPilot")
 with header_theme:
-    dark_mode = st.toggle("Тёмная тема", key="ui_dark_mode")
-apply_theme(dark_mode)
+    render_theme_toggle()
 st.caption("Опишите поездку своими словами: куда, когда, с кем и на какой бюджет.")
 
 # Чат использует всю доступную ширину, а три карточки — полноценную сетку ниже.
 with st.container():
     st.subheader("Диалог")
-    history_box = st.container(height=380)
+    history_box = st.container(height=380, border=True, key="chat_history")
     with history_box:
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
+        if st.session_state.get("agent_run"):
+            with st.chat_message("assistant"), st.container(key="agent_progress"):
+                run = st.session_state.agent_run
+                status = st.status(run["stage"], state="running")
+                details = status.empty()
+                answer = st.empty()
+                if run["reply"]:
+                    answer.markdown(run["reply"])
+                render_agent_progress(status, details, answer)
+    if st.session_state.get("agent_error"):
+        st.error(st.session_state.agent_error)
 
     render_question()
-    prompt = st.chat_input("Например: к тёплому морю в ноябре, недорого, с ребёнком")
+    prompt = st.chat_input(
+        "Например: к тёплому морю в ноябре, недорого, с ребёнком",
+        disabled=bool(st.session_state.get("agent_run")),
+    )
     prompt = st.session_state.pop("queued_answer", None) or prompt
-    if prompt:
+    if prompt and not st.session_state.get("agent_run"):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with history_box:
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            with st.chat_message("assistant"):
-                reply = run_agent(sid, text=prompt)
-        if reply:
-            st.session_state.messages.append({"role": "assistant", "content": reply})
-        if reply is not None:
-            st.rerun()
+        run_agent(sid, text=prompt)
+        st.rerun()
 
 render_plan(st.session_state.plan, sid)

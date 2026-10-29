@@ -14,7 +14,7 @@ def place_name(slug: str, places: dict[str, str] | None = None) -> str:
 
 
 def flight_text(flight: dict | None, places: dict[str, str] | None = None) -> str:
-    """Время каждого пункта сохраняет смещение из API, без перевода в зону браузера."""
+    """Показывает местное время каждого пункта без числового смещения."""
     if not flight:
         return "Данные о рейсе уточняются"
     try:
@@ -28,7 +28,7 @@ def flight_text(flight: dict | None, places: dict[str, str] | None = None) -> st
         baggage = "багаж включён" if flight.get("baggage_included") else "багаж не включён"
         return (
             f"{mode}: {origin} → {destination} · "
-            f"{departure:%d.%m %H:%M %z} → {arrival:%d.%m %H:%M %z} (местное время) · "
+            f"{departure:%d.%m %H:%M} → {arrival:%d.%m %H:%M} (местное время) · "
             f"{route_type} · {flight.get('carrier', '—')} · {baggage}"
         )
     except (KeyError, TypeError, ValueError):
@@ -89,6 +89,19 @@ def assumption_label(assumption: dict, places: dict[str, str] | None = None) -> 
     """Подпись зависит от реального value, а не от примера запроса."""
     field = assumption.get("field", "")
     value = str(assumption.get("value", ""))
+    if field.startswith("party.children_ages."):
+        index = field.removeprefix("party.children_ages.")
+        if index.isdigit():
+            label = f"Ребёнку №{int(index) + 1}"
+            if value.isdigit():
+                age = int(value)
+                suffix = "лет"
+                if age % 10 == 1 and age % 100 != 11:
+                    suffix = "год"
+                elif age % 10 in (2, 3, 4) and age % 100 not in (12, 13, 14):
+                    suffix = "года"
+                return f"{label}: {value} {suffix}"
+            return f"{label}: {value}"
     if field in ("origin", "destination"):
         label = "Город вылета" if field == "origin" else "Направление"
         return f"{label}: {place_name(value, places)}"
@@ -106,3 +119,16 @@ def assumption_label(assumption: dict, places: dict[str, str] | None = None) -> 
         except ValueError:
             return value
     return value
+
+
+def sources_text(package: dict) -> str:
+    """Номера источников соответствуют порядку ссылок [S1], [S2] в объяснении."""
+    labels = []
+    for index, hit in enumerate(package.get("sources") or [], start=1):
+        title = hit["title"]
+        heading = hit.get("heading_path")
+        if heading and heading != title:
+            title = heading if heading.startswith(f"{title} › ") else f"{title} › {heading}"
+        synthetic = " (синтетика)" if hit.get("source") == "synthetic" else ""
+        labels.append(f"[S{index}] {title}{synthetic}")
+    return "Источники: " + ", ".join(labels) if labels else ""

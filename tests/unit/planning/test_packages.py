@@ -58,6 +58,17 @@ def test_three_different_packages():
     assert len({p.hotel.id for p in packages}) == 3
 
 
+def test_same_hotel_repeats_only_when_it_gives_something():
+    """Один отель: дешёвый пакет с пересадками и прямой подороже; третий хуже обоих — его нет."""
+    outbound, inbound, hotels, transfers = _data()
+    packages = simple_packages(_request(), outbound, inbound, hotels[:1], transfers).unwrap()
+
+    assert [p.tier for p in packages] == ["economy", "comfort"]
+    economy, comfort = packages
+    assert comfort.total > economy.total
+    assert comfort.outbound.stops == comfort.inbound.stops == 0
+
+
 def test_tiers_follow_their_meaning():
     tiers = _by_tier(_packages())
     assert tiers["economy"].total == min(p.total for p in tiers.values())

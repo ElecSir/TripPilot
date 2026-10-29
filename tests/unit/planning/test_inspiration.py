@@ -92,3 +92,15 @@ def test_winter_ignores_warm_months():
 
 def test_is_deterministic():
     assert _pick(month=11, tags=["sea"]) == _pick(month=11, tags=["sea"])
+
+
+def test_trip_tags_do_not_filter_places():
+    """«Без долгих перелётов» — про дорогу: выбор мест тот же, что и без этого тега."""
+    with_trip_tag = _request(month=11, tags=["sea", "short_flight"])
+    assert pick_destinations(with_trip_tag, CATALOG) == pick_destinations(
+        _request(month=11, tags=["sea"]), CATALOG
+    )
+
+
+def test_ski_has_no_destinations_in_catalog():
+    assert pick_destinations(_request(month=1, tags=["ski"]), CATALOG) == []

@@ -125,13 +125,24 @@ async def evaluate_parse(catalog: list[Destination]) -> tuple[int, int, list[str
 async def evaluate_understand(
     catalog: list[Destination],
     llm,
+    *,
+    limit: int | None = None,
+    pause: float = 0.0,
 ) -> tuple[int, int, list[str]]:
-    """Дополнительная проверка LLM-разбора; запускается при наличии API-ключа."""
-    cases = load_yaml(CASES_DIR / "parse.yaml")
+    """Дополнительная проверка LLM-разбора; запускается при наличии API-ключа.
+
+    `limit` — сколько кейсов взять равномерно по набору, `pause` — секунд между запросами:
+    у бесплатных моделей OpenRouter лимит 20 запросов в минуту и 50 в день.
+    """
+    cases = list(enumerate(load_yaml(CASES_DIR / "parse.yaml"), start=1))
+    if limit is not None and limit < len(cases):
+        cases = cases[:: max(1, len(cases) // limit)][:limit]
     passed = 0
     errors = []
 
-    for number, case in enumerate(cases, start=1):
+    for index, (number, case) in enumerate(cases):
+        if index and pause:
+            await asyncio.sleep(pause)
         today = date.fromisoformat(str(case["today"]))
         base = TripRequest.model_validate(case["base"]) if case.get("base") else None
         state = TripState(session_id=uuid4(), request=base)
@@ -257,6 +268,8 @@ async def main() -> int:
         action="store_true",
         help="дополнительно проверить LLM-разбор запросов (может расходовать токены)",
     )
+    parser.add_argument("--limit", type=int, help="сколько кейсов LLM-разбора взять")
+    parser.add_argument("--pause", type=float, default=0.0, help="секунд между запросами к LLM")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -305,7 +318,9 @@ async def main() -> int:
             if not llm.enabled:
                 print("\nLLM-разбор пропущен: API-ключ не настроен.")
             else:
-                passed, total, errors = await evaluate_understand(catalog, llm)
+                passed, total, errors = await evaluate_understand(
+                    catalog, llm, limit=args.limit, pause=args.pause
+                )
                 print("\nРазбор запросов (LLM)")
                 print(f"Успешно: {passed}/{total}")
                 for error in errors:

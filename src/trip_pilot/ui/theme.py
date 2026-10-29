@@ -74,6 +74,22 @@ STYLES = Template(
 }
 .stApp a { color: var(--trip-accent); }
 
+/* Цвет рамок не зависит от базовой светлой темы Streamlit. */
+.stApp .st-key-chat_history {
+    border: 1px solid var(--trip-border) !important;
+    border-radius: 0.85rem !important;
+}
+:is(.stApp, [data-testid="stDialog"]) hr,
+[data-testid="stDialog"] [role="dialog"] {
+    border-color: var(--trip-border) !important;
+}
+
+/* Списки Markdown получают цвет напрямую: Streamlit задаёт li свой textColor. */
+:is(.stApp, [data-testid="stDialog"]) :is(ul, ol, li),
+:is(.stApp, [data-testid="stDialog"]) li::marker {
+    color: var(--trip-text) !important;
+}
+
 /* Рамка располагается на самой колонке с border=True.
    Никаких вложенных border-wrapper и селекторов их внутренней структуры. */
 .stApp [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .trip-card-marker) {
@@ -146,6 +162,28 @@ STYLES = Template(
     font-weight: 500;
 }
 
+/* Отключаем анимации только у пояснения допущений, сохраняя вращение статуса. */
+.stApp .st-key-assumptions_explanation [data-testid="stExpander"],
+.stApp .st-key-assumptions_explanation [data-testid="stExpander"] * {
+    transition: none !important;
+    animation: none !important;
+}
+/* Фрагмент опрашивает очередь часто; его статус и ответ не должны тускнеть. */
+.stApp .st-key-agent_progress [data-stale="true"],
+.stApp .st-key-agent_progress [data-testid="stExpander"] summary {
+    opacity: 1 !important;
+    transition: none !important;
+}
+.stApp .st-key-agent_progress [data-testid="stExpander"] details {
+    border-color: var(--trip-border) !important;
+    transition: none !important;
+}
+/* Индикатор нарисован рамкой span: цвет текста на него не влияет. */
+.stApp .st-key-agent_progress [data-testid="stExpanderIconSpinner"] {
+    border-color: var(--trip-border) !important;
+    border-top-color: var(--trip-text) !important;
+}
+
 /* Expander и раскрытая панель, включая summary и все вложенные подложки. */
 .stApp [data-testid="stExpander"] {
     background: var(--trip-overlay) !important;
@@ -178,7 +216,7 @@ STYLES = Template(
 }
 
 /* Корзина — отдельный ограниченный по ширине bordered-container Streamlit. */
-.stApp [data-testid="stVerticalBlockBorderWrapper"]:has(.trip-basket-marker) {
+.stApp .st-key-trip_basket {
     width: 100%;
     max-width: 70rem;
     margin-inline: auto;
@@ -358,6 +396,35 @@ div[role="dialog"] {
     border: 1px solid var(--trip-border) !important;
 }
 
+/* Ответы pills — отдельный вид кнопок, у него нет kind="secondary". */
+.stApp [data-testid="stButtonGroup"] button {
+    background: var(--trip-chip-bg) !important;
+    color: var(--trip-chip-text) !important;
+    border: 1px solid var(--trip-border) !important;
+}
+.stApp [data-testid="stButtonGroup"] button :is(p, span) {
+    color: inherit !important;
+}
+.stApp [data-testid="stButtonGroup"] button:hover {
+    background: var(--trip-hover) !important;
+}
+.stApp [data-testid="stButtonGroup"] button:is(
+    [aria-pressed="true"], [aria-checked="true"], [data-selected]
+) {
+    background: var(--trip-primary) !important;
+    color: #ffffff !important;
+    border-color: var(--trip-accent) !important;
+}
+.stApp [data-testid="stButtonGroup"] button:focus-visible {
+    outline: 2px solid var(--trip-accent) !important;
+    outline-offset: 2px;
+}
+.stApp [data-testid="stButtonGroup"] button:is(:disabled, [aria-disabled="true"], [data-disabled]) {
+    background: var(--trip-overlay) !important;
+    color: var(--trip-muted) !important;
+    opacity: 1 !important;
+}
+
 /* Поле ввода чата: все вложенные BaseWeb-слои одного цвета. */
 .stApp [data-testid="stChatMessage"],
 .stApp [data-testid="stChatInput"],
@@ -375,14 +442,24 @@ div[role="dialog"] {
     border-radius: 0.85rem !important;
     box-shadow: none !important;
 }
+.stApp [data-testid="stChatInput"] > div {
+    border: 1px solid var(--trip-border) !important;
+}
+.stApp [data-testid="stChatInput"] > div:focus-within {
+    border-color: var(--trip-accent) !important;
+}
 .stApp [data-testid="stChatInput"] textarea {
     background-color: transparent !important;
     color: var(--trip-text) !important;
+    -webkit-text-fill-color: var(--trip-text) !important;
     caret-color: var(--trip-text);
+    opacity: 1 !important;
 }
-.stApp [data-testid="stChatInput"] textarea::placeholder {
+.stApp [data-testid="stChatInput"] textarea::placeholder,
+.stApp [data-testid="stChatInput"] textarea:disabled::placeholder {
     color: var(--trip-muted) !important;
-    opacity: 1;
+    -webkit-text-fill-color: var(--trip-muted) !important;
+    opacity: 1 !important;
 }
 .stApp [data-testid="stChatInput"] button {
     background: transparent !important;
@@ -410,11 +487,11 @@ div[role="dialog"] {
     .stMainBlockContainer { padding-left: 1rem; padding-right: 1rem; }
     .stApp .trip-basket-marker { align-items: flex-start; }
     .stApp .trip-prices-panel { padding: 0.85rem; }
-    .stApp [data-testid="stVerticalBlockBorderWrapper"]:has(.trip-basket-marker)
+    .stApp .st-key-trip_basket
       [data-testid="stHorizontalBlock"]:has(.trip-prices-panel) {
         flex-wrap: wrap !important;
     }
-    .stApp [data-testid="stVerticalBlockBorderWrapper"]:has(.trip-basket-marker)
+    .stApp .st-key-trip_basket
       [data-testid="stHorizontalBlock"]:has(.trip-prices-panel) > [data-testid="stColumn"] {
         flex: 1 1 100% !important;
         width: 100% !important;

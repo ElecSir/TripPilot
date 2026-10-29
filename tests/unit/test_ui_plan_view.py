@@ -16,6 +16,7 @@ from trip_pilot.ui.plan_view import (
     has_synthetic_offers,
     hotel_details,
     plan_assumptions,
+    sources_text,
     transfer_text,
 )
 
@@ -31,6 +32,8 @@ def test_sample_plan_validates_as_trip_state() -> None:
     assert state.places["moscow"] == "Москва"
     assert state.search is not None
     for package in state.packages:
+        assert package.sources
+        assert all(hit.source == "synthetic" for hit in package.sources)
         assert breakdown_matches_total(package.model_dump(mode="json")) is True
         assert package.hotel.is_synthetic
         assert package.outbound.is_synthetic
@@ -47,7 +50,9 @@ def test_contract_package_renders_flights_transfer_and_hotel() -> None:
     inbound = flight_text(package["inbound"], places)
     assert "Москва → Анталья" in outbound
     assert "Анталья → Москва" in inbound
-    assert "10.11 19:10 +0300" in outbound
+    assert "10.11 19:10" in outbound
+    assert "(местное время)" in outbound
+    assert "+0300" not in outbound
     assert "Пересадок: 1" in outbound
     assert "Демо Авиа" in outbound
     assert "багаж не включён" in outbound
@@ -75,7 +80,8 @@ def test_direct_train_preserves_each_local_time_and_unknown_slug() -> None:
     )
     text = flight_text(leg, {"kazan": "Казань"})
     assert "Поезд: unknown → Казань" in text
-    assert "10.11 22:00 +0300 → 11.11 06:00 +0400" in text
+    assert "10.11 22:00 → 11.11 06:00 (местное время)" in text
+    assert "+0300" not in text and "+0400" not in text
     assert "без пересадок" in text
     assert "багаж включён" in text
 
@@ -102,6 +108,12 @@ def test_nullable_transfer_and_shuttle() -> None:
     ("nights", "на неделю", "на неделю"),
     ("date_from", "2030-11-10", "10.11.2030"),
     ("party", "2 взрослых", "2 взрослых"),
+    ("party.children_ages.0", "4", "Ребёнку №1: 4 года"),
+    ("party.children_ages.1", "1", "Ребёнку №2: 1 год"),
+    ("party.children_ages.0", "0", "Ребёнку №1: 0 лет"),
+    ("party.children_ages.2", "11", "Ребёнку №3: 11 лет"),
+    ("party.children_ages.0", "12", "Ребёнку №1: 12 лет"),
+    ("party.children_ages.0", "2–6", "Ребёнку №1: 2–6"),
 ])
 def test_assumption_uses_actual_value(field: str, value: str, expected: str) -> None:
     assert assumption_label({"field": field, "value": value}, {
@@ -120,6 +132,21 @@ def test_request_and_search_assumptions_are_combined() -> None:
 
 def test_contract_tier_labels() -> None:
     assert TIER_LABELS == {"economy": "Эконом", "balance": "Баланс", "comfort": "Комфорт"}
+
+
+def test_sources_keep_reference_order_headings_and_synthetic_label() -> None:
+    package = {"sources": [
+        {"title": "Анталья", "heading_path": "Анталья › С детьми", "source": "synthetic"},
+        {"title": "Казань", "heading_path": "Транспорт", "source": "wikivoyage"},
+        {"title": "Москва", "heading_path": None, "source": "wikivoyage"},
+        {"title": "Сочи", "heading_path": "Сочи", "source": "wikivoyage"},
+    ]}
+    assert sources_text(package) == (
+        "Источники: [S1] Анталья › С детьми (синтетика), "
+        "[S2] Казань › Транспорт, [S3] Москва, [S4] Сочи"
+    )
+    assert sources_text({}) == ""
+    assert sources_text({"sources": []}) == ""
 
 
 @pytest.mark.parametrize("component", ["hotel", "outbound", "inbound"])

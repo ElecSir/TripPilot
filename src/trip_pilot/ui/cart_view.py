@@ -4,7 +4,7 @@ from datetime import date
 from html import escape
 
 from trip_pilot.ui.checkout import breakdown_rows, money
-from trip_pilot.ui.plan_view import hotel_details, transfer_text
+from trip_pilot.ui.plan_view import hotel_details, sources_text, transfer_text
 
 
 def _html(value: object) -> str:
@@ -78,6 +78,11 @@ def cart_details_html(package: dict, request: dict, outbound: str, inbound: str,
         ])
     parts.append(_detail("🚐", "Трансфер", _html(transfer_label)))
     parts.append("</div>")
+    if sources := sources_text(package):
+        why = "".join(f"<li>{_html(point)}</li>" for point in package.get("why") or [])
+        if why:
+            parts.append(f'<div class="trip-detail-label">Почему подходит</div><ul>{why}</ul>')
+        parts.append(f'<div class="trip-detail-meta">{_html(sources)}</div>')
     return "".join(parts)
 
 

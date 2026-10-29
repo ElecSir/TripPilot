@@ -1,5 +1,7 @@
 """Содержимое и безопасность разметки корзины."""
 
+import pytest
+
 from trip_pilot.ui.cart_view import (
     cart_details_html,
     cart_header_html,
@@ -71,3 +73,23 @@ def test_unknown_breakdown_label_is_escaped() -> None:
 def test_incomplete_plan_does_not_assume_dates_or_guests() -> None:
     assert travel_dates({}) == "Даты уточняются"
     assert guests_text({}) == "Взрослых: —"
+
+
+@pytest.mark.parametrize("compact", [True, False])
+def test_sources_follow_explanation_and_escape_untrusted_content(compact: bool) -> None:
+    package = {
+        "why": ["Подходит <семьям> [S1]"],
+        "sources": [{"title": "<script>Анталья</script>", "heading_path": "С детьми & море",
+                     "source": "synthetic"}],
+    }
+    html = cart_details_html(package, {}, "туда", "обратно", compact=compact)
+    assert "Почему подходит" in html
+    assert "Подходит &lt;семьям&gt; [S1]" in html
+    assert "Источники: [S1] &lt;script&gt;Анталья&lt;/script&gt;" in html
+    assert "С детьми &amp; море (синтетика)" in html
+    assert html.index("Подходит") < html.index("Источники:")
+    assert "<script>" not in html
+    package["sources"] = []
+    html = cart_details_html(package, {}, "туда", "обратно", compact=compact)
+    assert "Источники:" not in html
+    assert "Почему подходит" not in html

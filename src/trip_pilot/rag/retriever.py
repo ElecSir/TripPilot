@@ -1,15 +1,20 @@
 """Полнотекстовый поиск и адаптер базы знаний RAG."""
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trip_pilot.adapters.db.knowledge import KbChunk, KbDocument
 from trip_pilot.adapters.db.reference import Destination
+from trip_pilot.adapters.llm.openai_compat import make_llm
+from trip_pilot.config import get_settings
 from trip_pilot.domain.knowledge import KnowledgeHit
 from trip_pilot.domain.request import TripRequest
+from trip_pilot.ports import LLMUnavailable
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -26,6 +31,29 @@ class RetrievedChunk:
     source: str
 
 
+_SECTION_SYNONYMS = {
+    "animals": {
+        "prefixes": ("собак", "кош", "питом", "животн"),
+        "heading": "%С животными%",
+        "terms": ("животными", "животное", "питомец"),
+    },
+    "season": {
+        "prefixes": ("сезон", "погод", "климат", "когда", "ехать"),
+        "heading": "%Когда лучше%",
+        "terms": ("сезон", "погода", "климат"),
+    },
+    "kids": {
+        "prefixes": ("ребен", "ребён", "дет", "сем"),
+        "heading": "%С детьми%",
+        "terms": ("ребёнок", "дети", "семья"),
+    },
+}
+
+@lru_cache(maxsize=1)
+def _get_llm():
+    """Создать LLM-клиент один раз и повторно использовать его."""
+    return make_llm(get_settings())
+
 async def search(
     session: AsyncSession,
     query: str,
@@ -33,41 +61,115 @@ async def search(
     doc_type: str | None = None,
     limit: int = 5,
 ) -> list[RetrievedChunk]:
-    """Найти наиболее релевантные фрагменты по текстовому запросу."""
+    """Найти релевантные фрагменты, включая поиск по отдельным словам."""
     if not query or not query.strip() or limit <= 0:
         return []
 
-    ts_query = func.websearch_to_tsquery("russian", query.strip())
+    tokens = list(dict.fromkeys(re.findall(r"[a-zа-яё0-9]+", query.casefold())))
+    if not tokens:
+        return []
 
-    statement = (
+    base_statement = (
         select(
             KbChunk,
             KbDocument.title.label("document_title"),
             KbDocument.source.label("source"),
             Destination.slug.label("destination"),
-            func.ts_rank_cd(KbChunk.tsv, ts_query).label("score"),
         )
         .join(KbDocument, KbChunk.document_id == KbDocument.id)
         .outerjoin(
             Destination,
             KbDocument.destination_id == Destination.id,
         )
-        .where(KbChunk.tsv.op("@@")(ts_query))
     )
 
     if destination:
-        statement = statement.where(Destination.slug == destination)
+        base_statement = base_statement.where(Destination.slug == destination)
 
     if doc_type:
-        statement = statement.where(KbDocument.doc_type == doc_type)
+        base_statement = base_statement.where(KbDocument.doc_type == doc_type)
 
-    statement = statement.order_by(
-        func.ts_rank_cd(KbChunk.tsv, ts_query).desc()
-    ).limit(limit)
+    # Сначала пробуем строгий полнотекстовый поиск.
+    strict_query = func.websearch_to_tsquery("russian", query.strip())
+    strict_statement = (
+        base_statement
+        .add_columns(
+            func.ts_rank_cd(KbChunk.tsv, strict_query).label("score")
+        )
+        .where(KbChunk.tsv.op("@@")(strict_query))
+        .order_by(func.ts_rank_cd(KbChunk.tsv, strict_query).desc())
+        .limit(limit)
+    )
 
-    result = await session.execute(statement)
+    result = await session.execute(strict_statement)
+    rows = result.all()
 
-    return [
+    # Пытаемся получить embedding поискового запроса.
+    # Если это не получится, останется полнотекстовый поиск.
+    query_vector = None
+
+    try:
+        llm = _get_llm()
+
+        if llm.enabled:
+            embeddings = await llm.embed([query.strip()])
+
+            if embeddings and len(embeddings[0]) == 1024:
+                query_vector = embeddings[0]
+
+    except LLMUnavailable:
+        # API недоступен — продолжаем работать без векторного поиска.
+        query_vector = None
+
+    # Если строгий поиск ничего не нашёл, ищем по любому слову
+    # и добавляем синонимы тематических разделов.
+    if not rows:
+        fallback_terms = list(tokens)
+        heading_conditions = []
+
+        for synonym in _SECTION_SYNONYMS.values():
+            if any(
+                token.startswith(synonym["prefixes"])
+                for token in tokens
+            ):
+                heading_conditions.append(
+                    KbChunk.heading_path.ilike(synonym["heading"])
+                )
+                fallback_terms.extend(synonym["terms"])
+
+        fallback_terms = list(dict.fromkeys(fallback_terms))
+        fallback_query = func.websearch_to_tsquery(
+            "russian",
+            " OR ".join(fallback_terms),
+        )
+
+        word_conditions = [
+            KbChunk.tsv.op("@@")(
+                func.plainto_tsquery("russian", token)
+            )
+            for token in tokens
+        ]
+
+        conditions = [*word_conditions, *heading_conditions]
+
+        fallback_statement = (
+            base_statement
+            .add_columns(
+                func.ts_rank_cd(KbChunk.tsv, fallback_query).label("score")
+            )
+            .where(or_(*conditions))
+            .order_by(
+                func.ts_rank_cd(KbChunk.tsv, fallback_query).desc()
+            )
+            .limit(limit)
+        )
+
+        result = await session.execute(fallback_statement)
+        rows = result.all()
+
+    
+    # Преобразуем результаты полнотекстового поиска.
+    text_hits = [
         RetrievedChunk(
             chunk=row[0],
             document_title=row.document_title,
@@ -75,7 +177,67 @@ async def search(
             score=float(row.score),
             source=row.source,
         )
-        for row in result.all()
+        for row in rows
+    ]
+
+    # Если embedding получить не удалось, используем только полнотекстовый поиск.
+    if query_vector is None:
+        return text_hits
+
+    # Векторный поиск по PostgreSQL с pgvector.
+    vector_statement = (
+        base_statement
+        .add_columns(
+            KbChunk.embedding.cosine_distance(query_vector).label("distance")
+        )
+        .where(KbChunk.embedding.is_not(None))
+        .order_by(KbChunk.embedding.cosine_distance(query_vector))
+        .limit(limit)
+    )
+
+    vector_result = await session.execute(vector_statement)
+    vector_rows = vector_result.all()
+
+    vector_hits = [
+        RetrievedChunk(
+            chunk=row[0],
+            document_title=row.document_title,
+            destination=row.destination,
+            score=float(row.distance),
+            source=row.source,
+        )
+        for row in vector_rows
+    ]
+
+    # Объединяем результаты через Reciprocal Rank Fusion (RRF).
+    # Чем выше позиция фрагмента в выдаче, тем больше его вклад.
+    rrf_k = 60
+    fused: dict[int, tuple[RetrievedChunk, float]] = {}
+
+    for ranked_hits in (text_hits, vector_hits):
+        for rank, hit in enumerate(ranked_hits, start=1):
+            chunk_id = hit.chunk.id
+            contribution = 1.0 / (rrf_k + rank)
+
+            if chunk_id in fused:
+                previous_hit, previous_score = fused[chunk_id]
+                fused[chunk_id] = (
+                    previous_hit,
+                    previous_score + contribution,
+                )
+            else:
+                fused[chunk_id] = (hit, contribution)
+
+    # Сортируем по итоговому RRF-score и возвращаем не больше limit фрагментов.
+    ranked_results = sorted(
+        fused.values(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    return [
+        replace(hit, score=rrf_score)
+        for hit, rrf_score in ranked_results[:limit]
     ]
 
 
@@ -123,8 +285,122 @@ class PostgresKnowledgeBase:
     async def context(
         self, request: TripRequest, destination: str, *, limit: int = 4
     ) -> list[KnowledgeHit]:
-        """Разделы под запрос для объяснений. Заглушка лида: пока пусто.
+        """Вернуть важные разделы направления и подходящие общие правила."""
+        if limit <= 0:
+            return []
 
-        rag заменяет тело (задача 3 в tasks/rag.md).
-        """
-        return []
+        # Чем меньше число, тем выше приоритет фрагмента.
+        priorities = {
+            "Почему ехать": 0,
+            "С детьми": 1,
+            "С животными": 1,
+            "Когда лучше": 2,
+            "Минусы и риски": 3,
+        }
+
+        async with self._session_factory() as session:
+            destination_result = await session.execute(
+                select(Destination).where(Destination.slug == destination)
+            )
+            destination_obj = destination_result.scalar_one_or_none()
+
+            if destination_obj is None:
+                return []
+
+            # Получаем разделы путеводителя только для нужного направления.
+            guide_result = await session.execute(
+                select(
+                    KbChunk,
+                    KbDocument.title.label("document_title"),
+                    KbDocument.source.label("source"),
+                    KbDocument.doc_type.label("doc_type"),
+                )
+                .join(
+                    KbDocument,
+                    KbChunk.document_id == KbDocument.id,
+                )
+                .where(
+                    KbDocument.destination_id == destination_obj.id,
+                    KbDocument.doc_type != "rules",
+                )
+            )
+
+            candidates = []
+
+            for row in guide_result.all():
+                heading_path = row[0].heading_path or ""
+
+                for section, priority in priorities.items():
+                    if heading_path.endswith(f"› {section}"):
+                        # Не добавляем раздел, который не нужен для запроса.
+                        if section == "С детьми" and not request.party.children_ages:
+                            continue
+                        if section == "С животными" and not request.party.pets:
+                            continue
+                        if section == "Когда лучше" and request.month is None:
+                            continue
+
+                        candidates.append(
+                            (
+                                priority,
+                                KnowledgeHit(
+                                    text=row[0].content,
+                                    title=row.document_title,
+                                    heading_path=heading_path,
+                                    source=row.source,
+                                    score=0.0,
+                                ),
+                            )
+                        )
+                        break
+
+            # Общие правила не привязаны к направлению.
+            relevant_tags = set()
+
+            if request.party.pets:
+                relevant_tags.update({"animals", "transport"})
+
+            if request.party.children_ages:
+                relevant_tags.update(
+                    {"children", "documents", "tickets", "family"}
+                )
+
+            if relevant_tags:
+                rules_result = await session.execute(
+                    select(
+                        KbChunk,
+                        KbDocument.title.label("document_title"),
+                        KbDocument.source.label("source"),
+                    )
+                    .join(
+                        KbDocument,
+                        KbChunk.document_id == KbDocument.id,
+                    )
+                    .where(
+                        KbDocument.doc_type == "rules",
+                        KbDocument.destination_id.is_(None),
+                    )
+                )
+
+                for row in rules_result.all():
+                    tags = set(row[0].meta.get("tags", []))
+                    if not tags.intersection(relevant_tags):
+                        continue
+
+                    candidates.append(
+                        (
+                            1,
+                            KnowledgeHit(
+                                text=row[0].content,
+                                title=row.document_title,
+                                heading_path=row[0].heading_path,
+                                source=row.source,
+                                score=0.0,
+                            ),
+                        )
+                    )
+
+        # Стабильная сортировка сохраняет порядок при равном приоритете.
+        candidates.sort(key=lambda item: item[0])
+
+        return [hit for _, hit in candidates[:limit]]

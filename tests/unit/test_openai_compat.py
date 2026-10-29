@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from openai import APIConnectionError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from trip_pilot.adapters.llm.openai_compat import (
     NullLLM,
@@ -111,13 +111,15 @@ def test_structured_retries_once_after_invalid_json(monkeypatch):
     assert client.chat.completions.create.await_count == 2
 
 
-def test_structured_raises_after_second_invalid_response(monkeypatch):
+def test_structured_raises_llm_unavailable_after_second_invalid_response(
+    monkeypatch,
+):
     llm, client = make_adapter(monkeypatch)
     client.chat.completions.create.return_value = completion_response(
         '{"wrong": 123}'
     )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(LLMUnavailable):
         run(llm.structured([], Greeting))
 
     assert client.chat.completions.create.await_count == 2
@@ -156,3 +158,83 @@ def test_embed_empty_input_does_not_call_api(monkeypatch):
 
     assert run(llm.embed([])) == []
     client.embeddings.create.assert_not_awaited()
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_complete_raises_llm_unavailable_on_auth_error(
+    monkeypatch,
+    status_code,
+):
+    llm, client = make_adapter(monkeypatch)
+    response = httpx.Response(
+        status_code,
+        request=httpx.Request("POST", "https://example.com"),
+    )
+    from openai import AuthenticationError, PermissionDeniedError
+
+    if status_code == 401:
+        error = AuthenticationError(
+            "Недействительный ключ",
+            response=response,
+            body=None,
+        )
+    else:
+        error = PermissionDeniedError(
+            "Доступ запрещён",
+            response=response,
+            body=None,
+        )
+
+    client.chat.completions.create.side_effect = error
+
+    with pytest.raises(LLMUnavailable):
+        run(llm.complete([{"role": "user", "content": "Привет"}]))
+
+
+def test_complete_raises_llm_unavailable_after_network_retries(
+    monkeypatch,
+):
+    llm, client = make_adapter(monkeypatch)
+    request = httpx.Request("POST", "https://example.com")
+    client.chat.completions.create.side_effect = APIConnectionError(
+        request=request
+    )
+
+    with pytest.raises(LLMUnavailable):
+        run(llm.complete([{"role": "user", "content": "Привет"}]))
+
+
+def test_structured_accepts_json_markdown_fence(monkeypatch):
+    llm, client = make_adapter(monkeypatch)
+    client.chat.completions.create.return_value = completion_response(
+        '```json\n{"text": "Поехали в Сочи"}\n```'
+    )
+
+    result = run(llm.structured([], Greeting))
+
+    assert result == Greeting(text="Поехали в Сочи")
+    client.chat.completions.create.assert_awaited_once()
+
+
+def test_complete_raises_llm_unavailable_after_rate_limit_retries(
+    monkeypatch,
+):
+    llm, client = make_adapter(monkeypatch)
+
+    request = httpx.Request("POST", "https://example.com")
+    response = httpx.Response(429, request=request)
+
+    from openai import RateLimitError
+
+    error = RateLimitError(
+        "Превышен лимит запросов",
+        response=response,
+        body=None,
+    )
+    client.chat.completions.create.side_effect = error
+
+    with pytest.raises(LLMUnavailable):
+        run(llm.complete([{"role": "user", "content": "Привет"}]))
+
+    assert client.chat.completions.create.await_count == 3
+    

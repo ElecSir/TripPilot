@@ -18,6 +18,8 @@ class KnowledgeChunk:
 
 def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     """Разобрать YAML в начале Markdown-файла."""
+    content = content.removeprefix("\ufeff")
+
     match = re.match(r"\A---\s*\r?\n(.*?)\r?\n---\s*(?:\r?\n|\Z)", content, re.DOTALL)
 
     if not match:
@@ -38,9 +40,15 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     if not isinstance(metadata["tags"], list):
         raise ValueError("Поле tags должно быть списком")
 
-    for field in ("title", "doc_type", "destination", "source"):
+    for field in ("title", "doc_type", "source"):
         if not isinstance(metadata[field], str) or not metadata[field].strip():
             raise ValueError(f"Поле {field} должно быть непустой строкой")
+
+    destination = metadata["destination"]
+    if destination is not None and (
+        not isinstance(destination, str) or not destination.strip()
+    ):
+        raise ValueError("Поле destination должно быть строкой или null")
 
     body = content[match.end():].strip()
     return metadata, body

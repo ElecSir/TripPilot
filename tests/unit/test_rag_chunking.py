@@ -70,3 +70,27 @@ def test_all_knowledge_files_have_valid_frontmatter() -> None:
         metadata, body = parse_frontmatter(path.read_text(encoding="utf-8"))
         assert metadata["destination"] == path.stem
         assert body
+
+
+def test_parse_frontmatter_allows_null_destination_for_rules() -> None:
+    """Общие правила могут не относиться к конкретному направлению."""
+    content = """---
+title: Правила перевозки животных
+doc_type: rules
+destination: null
+months: []
+tags: [animals, transport]
+source: synthetic
+---
+## Перевозка с питомцами
+
+Перед поездкой проверьте требования перевозчика.
+"""
+
+    metadata, body = parse_frontmatter(content)
+
+    assert metadata["doc_type"] == "rules"
+    assert metadata["destination"] is None
+    assert metadata["months"] == []
+    assert metadata["source"] == "synthetic"
+    assert "## Перевозка с питомцами" in body

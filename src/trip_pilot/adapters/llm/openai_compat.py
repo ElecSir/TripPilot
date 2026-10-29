@@ -20,6 +20,23 @@ from trip_pilot.ports import LLM, ChatMessages, LLMUnavailable
 T = TypeVar("T", bound=BaseModel)
 
 
+def _strip_json_fence(raw: str) -> str:
+    """Удалить Markdown-обёртку вокруг JSON, если она есть."""
+    stripped = raw.strip()
+
+    if not stripped.startswith("```"):
+        return stripped
+
+    lines = stripped.splitlines()
+
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+
+    return "\n".join(lines).strip()
+
 def _is_retryable(error: BaseException) -> bool:
     """Повторять только сетевые ошибки, таймауты и HTTP 429/5xx."""
     if isinstance(error, (APIConnectionError, APITimeoutError, RateLimitError)):
@@ -92,7 +109,15 @@ class OpenAICompatLLM:
     async def complete(self, messages: ChatMessages) -> str:
         """Получить обычный текстовый ответ."""
         model = self._require_model(self._model)
-        return await self._request_completion(messages, model)
+
+        try:
+            return await self._request_completion(messages, model)
+        except LLMUnavailable:
+            raise
+        except Exception as error:
+            raise LLMUnavailable(
+                "Не удалось получить ответ от LLM"
+            ) from error
 
     async def structured(self, messages: ChatMessages, schema: type[T]) -> T:
         """Получить JSON и проверить его по Pydantic-схеме.
@@ -115,12 +140,22 @@ class OpenAICompatLLM:
         ]
 
         for attempt in range(2):
-            raw = await self._request_completion(request_messages, model)
             try:
-                return schema.model_validate_json(raw)
-            except ValidationError:
+                raw = await self._request_completion(request_messages, model)
+            except LLMUnavailable:
+                raise
+            except Exception as error:
+                raise LLMUnavailable(
+                    "Не удалось получить структурированный ответ от LLM"
+                ) from error
+
+            try:
+                return schema.model_validate_json(_strip_json_fence(raw))
+            except ValidationError as error:
                 if attempt == 1:
-                    raise
+                    raise LLMUnavailable(
+                        "Ответ LLM не прошёл проверку схемы после повторной попытки"
+                    ) from error
 
                 request_messages.extend(
                     [
@@ -158,7 +193,15 @@ class OpenAICompatLLM:
             return []
 
         model = self._require_model(self._embeddings_model)
-        return await self._request_embeddings(texts, model)
+
+        try:
+            return await self._request_embeddings(texts, model)
+        except LLMUnavailable:
+            raise
+        except Exception as error:
+            raise LLMUnavailable(
+                "Не удалось получить эмбеддинги от LLM"
+            ) from error
 
 
 def make_llm(settings: Settings) -> LLM:
